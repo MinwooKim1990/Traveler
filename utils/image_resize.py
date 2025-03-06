@@ -1,6 +1,7 @@
 import os
 import logging
 from PIL import Image
+from PIL import ImageOps
 
 def resize_image(file_path, max_size_mb=7.5, quality=85):
     """
@@ -34,6 +35,8 @@ def resize_image(file_path, max_size_mb=7.5, quality=85):
     # 이미지 불러와서 크기 조정
     try:
         with Image.open(file_path) as img:
+            # Adjust image orientation according to EXIF
+            img = ImageOps.exif_transpose(img)
             # 이미지 정보 로깅
             logging.debug(f"원본 이미지: {file_path}, 크기: {img.size}, 용량: {file_size_mb:.2f}MB")
             

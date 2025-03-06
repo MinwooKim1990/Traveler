@@ -13,6 +13,7 @@ from utils.gemini import gemini_bot
 from utils.audio_convert import convert_m4a_to_mp3_moviepy
 from utils.whisper_gen import transcribe_audio, synthesize_speech
 from utils import search_nearby_places as maps_search_nearby
+from utils.image_resize import resize_image
 
 # 응답 저장 폴더 생성
 os.makedirs(RESPONSE_FOLDER, exist_ok=True)
@@ -85,18 +86,11 @@ def process_image_prompt(latitude, longitude, image_path):
         시스템 프롬프트 문자열
     """
     return f"""
-당신은 이미지를 분석하고 설명하는 전문가입니다. 
-제공된 이미지를 자세하게 분석하고, 이미지의 내용, 특징, 가능한 경우 역사적/문화적 배경을 설명해주세요.
+당신은 이미지를 분석하는 전문가입니다.
+제공된 이미지를 바탕으로 이미지의 주요 내용과 특징을 간단히 설명하고,
+여행자에게 도움이 될 추천 이유를 친절하게 제공해주세요.
 
-현재 이미지는 GPS 위치(위도: {latitude}, 경도: {longitude})에서 촬영되었습니다.
-이 위치 정보를 활용하여 이미지에 나타난 장소, 건물, 명소 등을 더 정확하게 식별해보세요.
-
-만약 이미지의 내용이 불분명하거나 더 자세한 정보가 필요한 경우, 'find_nearby_places' 함수를 사용하여 
-현재 위치 주변의 유명한 장소들을 찾아볼 수 있습니다.
-
-예를 들어, "이 지역에 있는 유명한 박물관을 찾아줘"라고 요청하면 해당 지역의 박물관 정보를 얻을 수 있습니다.
-
-한국어로 상세하게 친절한 말투로 대답해주세요.
+한국어로 간결하고 명확하게 답변해주세요.
 """
 
 @app.route('/upload', methods=['POST'])
@@ -107,6 +101,7 @@ def receive_data():
         JSON 응답 및 HTTP 상태 코드
     """
     try:
+        discord_sent = False  # Discord 메시지 전송 여부 플래그
         # API Key 검증
         key = request.headers.get("X-API-Key")
         if key != API_KEY:
@@ -193,46 +188,76 @@ def receive_data():
                 user_input=f"현재 위치(위도 {latitude}, 경도 {longitude})에서 가까운 맛집을 추천해주세요. 각 식당의 특징과 추천 이유를 상세히 설명해주세요."
             )
         
-        # 2. 이미지 + GPS - 이미지 분석 (더 상세한 설명 추가)
+        # 2. 이미지 + GPS - 이미지 리사이즈와 분석 결과를 이용하여 Discord 메시지 전송 후 음성 전송
         elif latitude and longitude and image_filename and not audio_filename and not extra_message:
-            logging.info("케이스 2: 이미지와 GPS 정보만 있는 경우 - 상세한 이미지 분석")
+            logging.info("케이스 2: 이미지와 GPS 정보가 있는 경우 - 이미지 리사이즈와 분석 결과를 이용하여 Discord 메시지 전송 후 음성 전송")
             
-            # 시스템 프롬프트 생성 - 더 상세한 설명 요청
-            system_prompt = f"""
-당신은 이미지를 분석하고 풍부하게 설명하는 전문가입니다. 
-제공된 이미지를 자세하게 분석하고:
+            # 시스템 프롬프트 생성
+            system_prompt = """
+당신은 이미지를 분석하는 전문가입니다.
+제공된 이미지를 바탕으로 이미지의 주요 내용과 특징을 간단히 설명하고,
+여행자에게 도움이 될 추천 이유를 친절하게 제공해주세요.
 
-1. 이미지의 주요 내용과 특징을 상세히 설명해주세요.
-2. 이미지에 있는 역사적/문화적 장소나 물체라면, 그 역사와 배경 정보를 최대한 풍부하게 설명해주세요.
-3. 관련된 흥미로운 사실이나 트리비아, 역사적 이야기를 포함해주세요.
-4. 여행자에게 도움이 될 만한 추가 정보를 제공해주세요.
-
-현재 이미지는 GPS 위치(위도: {latitude}, 경도: {longitude})에서 촬영되었습니다.
-이 위치 정보를 활용하여 더 정확한 정보를 제공해보세요.
-
-한국어로 여행 가이드처럼 상세하고 재미있게 설명해주세요.
+한국어로 간결하고 명확하게 답변해주세요.
 """
             
-            # LLM 요청 - 상세 분석 요청
-            llm_response = gemini_bot(
+            executor = concurrent.futures.ThreadPoolExecutor()
+
+            # 이미지 리사이즈 작업
+            future_resize = executor.submit(resize_image, image_filename, 7.5)
+            resized_image_filename = future_resize.result()
+
+            # Gemini 분석 호출
+            future_gemini = executor.submit(lambda: gemini_bot(
                 system_prompt=system_prompt,
-                user_input="이 이미지에 대해 최대한 상세히 설명해주세요. 역사적 배경, 문화적 의미, 재미있는 이야기 등을 모두 포함해서 여행 가이드처럼 설명해주세요.",
-                image_path=image_filename
-            )
-            
-            # 설명이 부족하다고 판단되면 주변 장소 정보 추가
-            if "정보가 부족" in llm_response or "확실하지 않" in llm_response or "알 수 없" in llm_response:
+                user_input="이 이미지에 대해 최대한 상세히 설명해주세요.",
+                image_path=resized_image_filename
+            ))
+            llm_response = future_gemini.result()
+
+            # 업데이트: 리사이즈된 이미지 파일 사용
+            image_filename = resized_image_filename
+
+            # Discord 메시지 전송: 이미지와 텍스트(분석 결과)를 포함하여 한 번에 전송
+            future_msg = executor.submit(lambda: asyncio.run_coroutine_threadsafe(
+                send_location_to_discord(
+                    latitude, longitude, street, city,
+                    extra_message=llm_response,
+                    image_path=image_filename,
+                    audio_path=None,
+                    show_places=False
+                ), bot.loop
+            ).result())
+            try:
+                future_msg.result(timeout=30)
+            except Exception as e:
+                logging.error(f"디스코드 메시지 전송 실패 (이미지+텍스트): {e}")
+
+            # TTS: 음성 합성
+            import re
+            audio_text = re.sub(r'[*_`~]', '', llm_response)
+            response_audio_filename = os.path.join(RESPONSE_FOLDER, f"response_{int(time.time())}.mp3")
+            tts_success = synthesize_speech(audio_text, response_audio_filename)
+            if tts_success:
+                future_audio = executor.submit(lambda: asyncio.run_coroutine_threadsafe(
+                    send_location_to_discord(
+                        latitude, longitude, street, city,
+                        extra_message="음성 응답",
+                        image_path=None,
+                        audio_path=response_audio_filename,
+                        show_places=False
+                    ), bot.loop
+                ).result())
                 try:
-                    lat1, lng1 = float(latitude), float(longitude)
-                    nearby_places = maps_search_nearby(lat1, lng1, radius=1000, k=3)
-                    
-                    additional_info = "\n\n주변에 다음과 같은 유명한 장소들이 있습니다:\n"
-                    for i, place in enumerate(nearby_places, 1):
-                        additional_info += f"{i}. {place['name']} (거리: {place['distance']:.2f}km)\n"
-                    
-                    llm_response += additional_info
+                    future_audio.result(timeout=30)
                 except Exception as e:
-                    logging.error(f"주변 장소 정보 추가 중 오류: {e}")
+                    logging.error(f"디스코드 메시지 전송 실패 (음성): {e}")
+            else:
+                logging.error("TTS 음성 합성 실패")
+
+            executor.shutdown(wait=True)
+            discord_sent = True
+            return jsonify({'status': 'success'})
         
         # 3. 이미지 + 메시지 + GPS - 메시지를 프롬프트로 사용
         elif latitude and longitude and image_filename and not audio_filename and extra_message:
@@ -366,29 +391,29 @@ def receive_data():
                 llm_response = "제공된 정보를 처리했습니다."
 
         # 처리 결과 및 최종 메시지 정리
-        response_message = extra_message if extra_message else "처리된 데이터"
-        
-        if llm_response:
-            response_message = llm_response
-            
-        # 디스코드로 전송 (비동기) - 맛집 정보는 표시하지 않음
-        future = asyncio.run_coroutine_threadsafe(
-            send_location_to_discord(
-                latitude, longitude, street, city,
-                extra_message=response_message,
-                image_path=image_filename,
-                audio_path=response_audio if response_audio else audio_filename,
-                show_places=False  # 주변 장소 정보 표시하지 않음
-            ),
-            bot.loop
-        )
-        
-        try:
-            future.result(timeout=30)
-        except concurrent.futures.TimeoutError:
-            logging.error("디스코드 메시지 전송 시간 초과")
-        except Exception as e:
-            logging.error(f"디스코드 전송 중 오류: {e}")
+        if not discord_sent:
+            response_message = extra_message if extra_message else "처리된 데이터"
+
+            if llm_response:
+                response_message = llm_response
+
+            # 디스코드로 전송 (비동기) - 맛집 정보는 표시하지 않음
+            future = asyncio.run_coroutine_threadsafe(
+                send_location_to_discord(
+                    latitude, longitude, street, city,
+                    extra_message=response_message,
+                    image_path=image_filename,
+                    audio_path=response_audio if response_audio else audio_filename,
+                    show_places=False  # 주변 장소 정보 표시하지 않음
+                ),
+                bot.loop
+            )
+            try:
+                future.result(timeout=30)
+            except concurrent.futures.TimeoutError:
+                logging.error("디스코드 메시지 전송 시간 초과")
+            except Exception as e:
+                logging.error(f"디스코드 전송 중 오류: {e}")
 
         return jsonify({
             "status": "success",

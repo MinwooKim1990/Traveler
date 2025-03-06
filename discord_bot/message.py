@@ -25,10 +25,11 @@ async def send_location_to_discord(latitude, longitude, street, city, extra_mess
         logging.error(f"GPS 좌표 변환 오류: {e}")
         return
 
-    # 디스코드 채널 가져오기
+    # 디스코드 채널 가져오기 및 타입 확인
+    from discord import TextChannel
     channel = get_channel()
-    if not channel:
-        logging.error("디스코드 채널을 찾을 수 없습니다.")
+    if not channel or not isinstance(channel, TextChannel):
+        logging.error("디스코드 채널을 찾을 수 없거나 TextChannel이 아님")
         return
 
     # 메시지 구성
@@ -99,12 +100,12 @@ async def send_location_to_discord(latitude, longitude, street, city, extra_mess
             chunks = [message[i:i+1900] for i in range(0, len(message), 1900)]
             for j, chunk in enumerate(chunks):
                 if j == 0:
-                    await channel.send(content=f"메시지 파트 {j+1}/{len(chunks)}:\n{chunk}", files=files if files else None)
+                    await channel.send(content=f"메시지 파트 {j+1}/{len(chunks)}:\n{chunk}", files=files)
                 else:
                     await channel.send(content=f"메시지 파트 {j+1}/{len(chunks)}:\n{chunk}")
                 await asyncio.sleep(1)
         else:
-            await channel.send(content=message, files=files if files else None)
+            await channel.send(content=message, files=files)
         logging.info("디스코드 메시지 전송 성공")
     except Exception as e:
         logging.error(f"메시지 전송 실패: {e}")
@@ -115,7 +116,7 @@ async def on_message(message):
     # 자신의 메시지는 무시
     if message.author == bot.user:
         return
-        
+
     # 봇 명령어 처리를 위한 기본 처리
     await bot.process_commands(message)
     
@@ -158,3 +159,14 @@ async def on_message(message):
         except Exception as e:
             logging.error(f"Gemini API 호출 중 오류: {e}")
             await message.channel.send(f"죄송합니다, 응답을 생성하는 중 오류가 발생했습니다: {str(e)}")
+
+    from discord import MessageReference
+    if message.reference is not None:
+        reference: MessageReference = message.reference
+        if reference.message_id is not None:
+            try:
+                ref_msg = await message.channel.fetch_message(reference.message_id)
+                combined_content = f"Reply to: {ref_msg.content}\n" + message.content
+                setattr(message, 'content', combined_content)
+            except Exception as e:
+                logging.error(f"답장 메시지 가져오기 실패: {e}")

@@ -11,6 +11,9 @@ logging.basicConfig(level=logging.DEBUG,
                     format='[%(asctime)s] [%(levelname)-8s] %(message)s', 
                     datefmt='%Y-%m-%d %H:%M:%S')
 
+# 추가: 전역 변수 HISTORY 선언
+HISTORY = []
+
 def gemini_bot(system_prompt: Optional[str] = None, user_input: str = "", image_path: Optional[str] = None, history_turns: int = 7):
     # API 키 설정
     genai.configure(api_key=GEMINI_API_KEY)
@@ -18,11 +21,16 @@ def gemini_bot(system_prompt: Optional[str] = None, user_input: str = "", image_
     # 모델 선택
     model = genai.GenerativeModel('gemini-2.0-flash-lite')
     
-    # 히스토리 리스트
-    history = []  # 유저 프롬프트와 LLM 응답을 저장하는 리스트
-    
+    # 전역 대화 기록 사용
+    global HISTORY
     if system_prompt is None:
-        system_prompt="당신은 여행자를 돕는 친절한 AI 어시스턴트입니다. 한국어로 상세한 답변을 제공합니다."
+        system_prompt = "당신은 여행자를 돕는 친절한 AI 어시스턴트입니다. 한국어로 상세한 답변을 제공합니다."
+    
+    # 시스템 프롬프트는 항상 첫번째에 유지
+    if not HISTORY:
+        HISTORY = [system_prompt]
+    else:
+        HISTORY[0] = system_prompt
 
     # 이미지 로드 - 이미지 경로가 있고 실제 파일이 존재할 때만 처리
     image = None
@@ -32,32 +40,32 @@ def gemini_bot(system_prompt: Optional[str] = None, user_input: str = "", image_
             logging.debug(f"이미지 파일 첨부: {image_path}")
         except Exception as e:
             logging.error(f"이미지 로드 실패: {e}")
-            # 이미지 로드 실패 시 None으로 설정하여 추가하지 않음
             image = None
 
-    # 히스토리 업데이트 (최근 N턴 유지)
-    history.append(f"User: {user_input}")
-    
-    # `history_turns` 초과 시 가장 오래된 기록 삭제
-    if len(history) > history_turns * 2:  # user와 llm 응답 포함하므로 *2
-        history = history[-(history_turns * 2):]
+    # 대화 기록 업데이트
+    HISTORY.append(f"User: {user_input}")
 
-    # 프롬프트 구성
+    # 히스토리 유지: 시스템 프롬프트 + 최근 history_turns*2 메시지 유지
+    if len(HISTORY) > (history_turns * 2 + 1):
+        HISTORY = [HISTORY[0]] + HISTORY[-(history_turns * 2):]
+
+    # 프롬프트 구성 (순서 변경: 시스템 프롬프트, 이미지(존재 시), user_input, 그리고 이전 대화 기록)
     try:
         prompt_parts = []
-        prompt_parts.append(system_prompt)
-        prompt_parts.append(user_input)
+        # 전체 대화 기록 사용 (시스템 프롬프트 포함)
+        prompt_parts.extend(HISTORY)
         
-        # 이미지가 있는 경우 추가
+        # 이미지가 있는 경우, prompt에 이미지 객체를 시스템 프롬프트와 유저 입력 사이에 추가
         if image is not None:
-            prompt_parts.append(image)
-            
+            # 이미지 정보를 프롬프트에 추가 (이미지 객체 직접 전달)
+            prompt_parts.insert(1, image)
+        
         # LLM 호출
         response = model.generate_content(prompt_parts)
 
         # LLM 응답 저장 및 출력
         llm_response = response.text
-        history.append(f"Assistant: {llm_response}")
+        HISTORY.append(f"Assistant: {llm_response}")
         return llm_response
     except Exception as e:
         error_msg = f"LLM 호출 중 오류 발생: {e}"
