@@ -1,0 +1,10 @@
+flask==2.3.3
+python-dotenv==1.0.0
+discord.py==2.3.2
+googlemaps==4.10.0
+requests==2.31.0
+google-generativeai==0.3.1
+openai-whisper==20231117
+gtts==2.4.0
+moviepy==1.0.3
+pillow==10.1.0 
