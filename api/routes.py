@@ -7,26 +7,27 @@ import concurrent.futures
 import time
 import uuid
 import json
+import discord
 from pathlib import Path
 from flask import Flask, request, jsonify
-from config import API_KEY, UPLOAD_FOLDER, RESPONSE_FOLDER
-from discord_bot import bot, send_location_to_discord
+from config import API_KEY, UPLOAD_FOLDER, RESPONSE_FOLDER, CHANNEL_ID, HISTORY_SIZE
+from discord_bot.bot import bot
+from discord_bot import send_location_to_discord  # 다시 직접 임포트
+
 from utils.audio_convert import convert_m4a_to_mp3_moviepy
-from utils.whisper_gen import transcribe_audio, synthesize_text
+from utils.whisper_gen import transcribe_audio, synthesize_text, detect_language
 from utils import search_nearby_places as maps_search_nearby
 from utils.image_resize import resize_image
 from utils.new_utils import get_local_time_by_gps, get_search_results, generate_content_with_history, generate_unique_filename
 
 Global_History = []
-restaurant_history = []
-image_without_message_history = []
 
 # 응답 저장 폴더 생성
 os.makedirs(RESPONSE_FOLDER, exist_ok=True)
 
 app = Flask(__name__)
 
-def System_Prompt(latitude, longitude, city, street, now_time, selection):
+def System_Prompt(latitude, longitude, city, street, user_prompt, now_time, selection):
     """
     selection: 1 -> GPS only
     selection: 2 -> Image + GPS
@@ -35,6 +36,8 @@ def System_Prompt(latitude, longitude, city, street, now_time, selection):
     """
     user_preference = """너무 매운것은 못먹고, 치즈가 많은 피자를 좋아하며 다이어트를 생각해서 야채를 먼저 먹는걸 좋아함. 
     육류도 좋아하며 해산물 및 회 또한 좋아하는 편이고 너무 야채만 많은 음식은 별로 좋아하지 않고 냄새가 많이 나는 음식도 별로 좋아하지 않음."""
+
+    locale_mapper={"ko": "Korean", "en": "English", "ja": "Japanese", "zh": "Chinese"}
 
     if selection == 1:
         return f"""
@@ -180,10 +183,14 @@ Use the user's current location and time from user prompt to make the conversati
 - **If it's foreign text:** Be **helpful, detailed, and educational**.
 
 ### **Output Requirements**
-- **MUST Respond with the same language as the user's input**
-- **MUST Response with only your outputs in Markdown format Not Json style**
+- **IMPORTANT:MUST Respond with Korean**
+- **IMPORTANT:MUST Response with only your outputs in Markdown format**
 """
     elif selection == 3:
+        if user_prompt is not None:
+            user_language = detect_language(user_prompt)
+        else:
+            user_language = "Korean"
         return f"""
 # Multimodal Assistant
 
@@ -261,13 +268,13 @@ Use the user's current location and time from user prompt to make the conversati
 ------------------------------------------------------------
 ### **Step 4: Foreign Text Analysis**
 ------------------------------------------------------------
-> If the image contains text in a non-user prompt language (signs, menus, documents, etc.), provide a comprehensive analysis:
+> If the image contains text in a non-{locale_mapper[user_language]} language (signs, menus, documents, etc.), provide a comprehensive analysis:
 
 #### **1. Text Identification & Translation**
 - Identify the language of the text
 - Transcribe the original text
-- Provide a complete translation in user prompt language
-- **MUST Show original text of image in parentheses next to translation to understand foreign text in the image well. ex) foods(음식), philates(필라테스), etc.**
+- Provide a complete translation in {locale_mapper[user_language]}
+- **IMPORTANT:MUST Show original text of image in parentheses next to translation to understand foreign text in the image well. ex) {locale_mapper[user_language]}(Foreign Text in the image)**
 
 #### **2. Content Analysis**
 - For menus: Explain dishes, ingredients, pricing, and specialties
@@ -293,7 +300,7 @@ Use the user's current location and time from user prompt to make the conversati
 ============================================================
 ## Response Guidelines
 ============================================================
-- **MUST Respond to prompts in languages in their respective language from user prompt**
+- **IMPORTANT:Response Must be in {locale_mapper[user_language]}**
 - Provide friendly, appropriately-sized responses based on the user's query
 - Adjust detail level based on the nature of the user's request
 
@@ -308,9 +315,9 @@ Use the user's current location and time from user prompt to make the conversati
    ```
 3. **Filter Results**: 
    - Process search results by analyzing the returned titles and snippets
-   - Summarize the information in the user's input language, even if search results are in different languages
+   - Summarize the information in search results
    - Include relevant citations as references at the end of your response
-   - Translate if needed - ensure all information is presented in the user's preferred language regardless of the language of search results
+   - Translate if needed - ensure all information is presented in the {locale_mapper[user_language]}
 
 ============================================================
 ## Using Nearby Search Function
@@ -325,9 +332,9 @@ Use the user's current location and time from user prompt to make the conversati
    ```
 3. **Filter Results**: 
    - Process search results by analyzing the returned titles and snippets
-   - Summarize the information in the user's input language, even if search results are in different languages
+   - Summarize the information in search results
    - Present 5 best matches to the user based on distance, rate, name and explain why you recommend them
-   - Translate if needed - ensure all information is presented in the user's preferred language regardless of the language of search results
+   - Translate if needed - ensure all information is presented in the {locale_mapper[user_language]}
 
 ============================================================
 ## Recommendation Format
@@ -339,7 +346,7 @@ For each selected restaurant, provide:
 ============================================================
 ## Output Requirements
 ============================================================
-- Match response language to input language
+- **IMPORTANT:Response Must be in {locale_mapper[user_language]}**
 - Use polite, friendly tone
 - Write in Markdown format for better readability
 - Include references to search results when applicable
@@ -347,22 +354,26 @@ For each selected restaurant, provide:
 """
 
     elif selection == 4:
+        if user_prompt is not None:
+            user_language = detect_language(user_prompt)
+        else:
+            user_language = "Korean"
         return f"""
 # Multimodal Assistant
 
 ## Primary Role
-You are a specialized assistant based on user's current location and time.
+You are a specialized function call assistant based on user's current location and time.
 
 ## Core Responsibilities
 - Be aware of user's current location (latitude/longitude) and time
 - Use a friendly, detailed communication style
 
 ## Location and Time Parameters
-- Use the provided `{latitude}`, `{longitude}`, `{city}`, `{street}`, and `{now_time}` as the basis for recommendations
+- Use the provided `{latitude}`, `{longitude}`, and `{now_time}` as the basis for recommendations
 - These parameters represent the user's current context for providing relevant suggestions
 
 ## Response Guidelines
-- **MUST Respond to prompts in languages in their respective language from user prompt**
+- **IMPORTANT: Your output response MUST be generated in EXACTLY {locale_mapper[user_language]}.**
 - Provide friendly, appropriately-sized responses based on the user's query
 - Adjust detail level based on the nature of the user's request
 
@@ -375,10 +386,10 @@ You are a specialized assistant based on user's current location and time.
    ```
 3. **Filter Results**: 
    - Process search results by analyzing the returned titles and snippets
-   - Summarize the information in the user's input language, even if search results are in different languages
+   - Summarize the information all the information in the search results
    - Include relevant citations as references at the end of your response
-   - **Citations Must not follwing Markdown format ex) Using only URL in parenthesis (https://www.apple.com/newsroom/) instead of [https://www.apple.com/newsroom/](https://www.apple.com/newsroom/)**
-   - Translate if needed - ensure all information is presented in the user's input language regardless of the language of search results
+   - **IMPORTANT:Citations Must not follwing Markdown format ex) Using only URL(Whole URL without missing http:// or https://) in parenthesis from(https://www.xxx.com/) instead of markdown format [https://www.xxx.com/](https://www.xxx.com/)**
+   - Translate if needed - ensure all information is presented in the {locale_mapper[user_language]}
 
 
 ## Using Nearby Search Function
@@ -392,9 +403,9 @@ You are a specialized assistant based on user's current location and time.
    ```
 3. **Filter Results**: 
    - Process search results by analyzing the returned titles and snippets
-   - Summarize the information in the user's input language, even if search results are in different languages
+   - Summarize the information all the information in the search results
    - Present 5 best matches to the user based on distance, rate, name and explain why you recommend them
-   - Translate if needed - ensure all information is presented in the user's input language regardless of the language of search results
+   - Translate if needed - ensure all information is presented in the {locale_mapper[user_language]}
 
 ## Recommendation Format
 For each selected restaurant, provide:
@@ -402,7 +413,7 @@ For each selected restaurant, provide:
 - If you use function, provide more structured and detailed information about the search results
 
 ## Output Requirements
-- **MUST Match response language to input language**
+- **IMPORTANT:MUST Response in {locale_mapper[user_language]}**
 - Use polite, friendly tone
 - Write in Markdown format for better readability
 - Include references to search results when applicable
@@ -484,7 +495,7 @@ def receive_data():
             now_time = get_local_time_by_gps(latitude, longitude) if latitude and longitude else ""
             
             # 시스템 프롬프트 생성
-            system_prompt = System_Prompt(latitude, longitude, city, street, now_time, 4)
+            system_prompt = System_Prompt(latitude, longitude, city, street, extra_message, now_time, 4)
             
             function_list = [maps_search_nearby, get_search_results]
             
@@ -493,21 +504,28 @@ def receive_data():
                 new_message=extra_message,
                 function_list=function_list,
                 image_path=image_filename if image_filename else "",
-                k=7,
+                k=HISTORY_SIZE,
                 history=Global_History
             )
-            llm_response = dict(list(llm_response)[-1])['content']
             
-            # 디스코드로 응답 전송
+            # 응답 텍스트 추출
+            response_text = "응답을 찾을 수 없습니다."
+            if isinstance(llm_response, list) and len(llm_response) >= 1:
+                # 마지막 assistant 응답 가져오기
+                for msg in reversed(llm_response):
+                    if isinstance(msg, dict) and msg.get("role") == "assistant":
+                        response_text = msg.get("content", "응답을 가져올 수 없습니다.")
+                        break
+            
+            # 디스코드로 응답 전송 
             executor = concurrent.futures.ThreadPoolExecutor()
             future_msg = executor.submit(lambda: asyncio.run_coroutine_threadsafe(
                 send_location_to_discord(
                     latitude, longitude, street, city,
-                    extra_message=llm_response,
-                    image_path=None,
+                    extra_message=response_text,
+                    image_path="",
                     audio_path=None,
-                    show_places=False,
-                    message_include=True
+                    show_places=False
                 ), bot.loop
             ).result())
             
@@ -529,24 +547,32 @@ def receive_data():
             executor = concurrent.futures.ThreadPoolExecutor()
             now_time = get_local_time_by_gps(latitude, longitude)
             # 시스템 프롬프트 생성
-            system_prompt = System_Prompt(latitude, longitude, city, street, now_time, 1)
+            system_prompt = System_Prompt(latitude, longitude, city, street, None, now_time, 1)
             # LLM 요청 - 실제 검색 결과를 바탕으로 추천 생성
             llm_response = generate_content_with_history(
                 system_prompt=system_prompt,
                 new_message=f"현재 시간 {now_time}, 현재 위치는 위치(위도 {latitude}, 경도 {longitude}) 부가적인 현재 도시와 거리는 {city}, {street}.",
                 function_list=[maps_search_nearby],
-                image_path=None,
-                k=7,
-                history=restaurant_history
+                image_path="",
+                k=HISTORY_SIZE,
+                history=Global_History
             )
-            llm_response = dict(list(llm_response)[-1])['content']
-            print(llm_response)
-
+            
+            # 응답 텍스트 추출
+            response_text = "응답을 찾을 수 없습니다."
+            if isinstance(llm_response, list) and len(llm_response) >= 1:
+                # 마지막 assistant 응답 가져오기
+                for msg in reversed(llm_response):
+                    if isinstance(msg, dict) and msg.get("role") == "assistant":
+                        response_text = msg.get("content", "응답을 가져올 수 없습니다.")
+                        break
+            
             # Discord 메시지 전송: 맛집 텍스트(분석 결과)를 포함하여 한 번에 전송
+            executor = concurrent.futures.ThreadPoolExecutor()
             future_msg = executor.submit(lambda: asyncio.run_coroutine_threadsafe(
                 send_location_to_discord(
                     latitude, longitude, street, city,
-                    extra_message=llm_response,
+                    extra_message=response_text,
                     image_path=None,
                     audio_path=None,
                     show_places=False,
@@ -569,7 +595,7 @@ def receive_data():
             logging.info("케이스 2: 이미지와 GPS 정보가 있는 경우 - 이미지 리사이즈와 분석 결과를 이용하여 Discord 메시지 전송 후 음성 전송")
             now_time = get_local_time_by_gps(latitude, longitude)
             # 시스템 프롬프트 생성
-            system_prompt = System_Prompt(latitude, longitude, city, street, now_time, 2)
+            system_prompt = System_Prompt(latitude, longitude, city, street, None, now_time, 2)
             
             executor = concurrent.futures.ThreadPoolExecutor()
 
@@ -603,19 +629,28 @@ def receive_data():
             llm_response = generate_content_with_history(
                 system_prompt=system_prompt,
                 new_message=f"현재 시간 {now_time}, 현재 위치는 위치(위도 {latitude}, 경도 {longitude}) 부가적인 현재 도시와 거리는 {city}, {street}.",
-                image_path=resized_image_filename,
-                k=5,
-                function_list=None,
-                history=image_without_message_history
+                image_path=resized_image_filename or "",
+                k=HISTORY_SIZE,
+                function_list=[],
+                history=Global_History
             )
-            llm_response = dict(list(llm_response)[-1])['content']
+            
+            # 응답 텍스트 추출
+            response_text = "응답을 찾을 수 없습니다."
+            if isinstance(llm_response, list) and len(llm_response) >= 1:
+                # 마지막 assistant 응답 가져오기
+                for msg in reversed(llm_response):
+                    if isinstance(msg, dict) and msg.get("role") == "assistant":
+                        response_text = msg.get("content", "응답을 가져올 수 없습니다.")
+                        break
 
             # Discord 메시지 전송: 텍스트(분석 결과)를 포함하여 한 번에 전송
+            executor = concurrent.futures.ThreadPoolExecutor()
             future_msg = executor.submit(lambda: asyncio.run_coroutine_threadsafe(
                 send_location_to_discord(
                     latitude, longitude, street, city,
-                    extra_message=llm_response,
-                    image_path=None,
+                    extra_message=response_text,
+                    image_path="",
                     audio_path=None,
                     show_places=False,
                     message_include=True
@@ -628,13 +663,13 @@ def receive_data():
 
             # TTS: 음성 합성
             response_audio_filename = os.path.join(RESPONSE_FOLDER, f"response_{int(time.time())}.mp3")
-            tts_success = synthesize_text(llm_response, response_audio_filename, gender="female", speed=1.1)
+            tts_success = synthesize_text(response_text, response_audio_filename, gender="female", speed=1.1)
             if tts_success:
                 future_audio = executor.submit(lambda: asyncio.run_coroutine_threadsafe(
                     send_location_to_discord(
                         latitude, longitude, street, city,
                         extra_message="음성 응답",
-                        image_path=None,
+                        image_path='',
                         audio_path=response_audio_filename,
                         show_places=False,
                         message_include=False
@@ -658,7 +693,7 @@ def receive_data():
             logging.info("케이스 3: 이미지 + 메시지 + GPS - 메시지를 그대로 프롬프트로 사용")
             now_time = get_local_time_by_gps(latitude, longitude)
             # 기본 시스템 프롬프트
-            system_prompt = System_Prompt(latitude, longitude, city, street, now_time, 3)
+            system_prompt = System_Prompt(latitude, longitude, city, street, extra_message, now_time, 3)
             executor = concurrent.futures.ThreadPoolExecutor()
             # 이미지 용량이 8MB 이상일 때만 리사이즈를 수행합니다.
             if os.path.getsize(image_filename) >= 7.5 * 1024 * 1024:
@@ -690,18 +725,28 @@ def receive_data():
             llm_response = generate_content_with_history(
                 system_prompt=system_prompt,
                 new_message=extra_message,
-                image_path=resized_image_filename,
+                image_path=resized_image_filename or "",
                 function_list=[get_search_results],
+                k=HISTORY_SIZE,
                 history=Global_History
             )
-            llm_response = dict(list(llm_response)[-1])['content']
-
+            
+            # 응답 텍스트 추출
+            response_text = "응답을 찾을 수 없습니다."
+            if isinstance(llm_response, list) and len(llm_response) >= 1:
+                # 마지막 assistant 응답 가져오기
+                for msg in reversed(llm_response):
+                    if isinstance(msg, dict) and msg.get("role") == "assistant":
+                        response_text = msg.get("content", "응답을 가져올 수 없습니다.")
+                        break
+            
             # Discord 메시지 전송: 텍스트(분석 결과)를 포함하여 한 번에 전송
+            executor = concurrent.futures.ThreadPoolExecutor()
             future_msg = executor.submit(lambda: asyncio.run_coroutine_threadsafe(
                 send_location_to_discord(
                     latitude, longitude, street, city,
-                    extra_message=llm_response,
-                    image_path=None,
+                    extra_message=response_text,
+                    image_path="",
                     audio_path=None,
                     show_places=False,
                     message_include=True
@@ -737,7 +782,7 @@ def receive_data():
                 now_time = get_local_time_by_gps(latitude, longitude)
                 
                 # 시스템 프롬프트 생성
-                system_prompt = System_Prompt(latitude, longitude, city, street, now_time, 3)
+                system_prompt = System_Prompt(latitude, longitude, city, street, transcribed_text, now_time, 3)
                 executor = concurrent.futures.ThreadPoolExecutor()
                 # 이미지 용량이 8MB 이상일 때만 리사이즈를 수행합니다.
                 if os.path.getsize(image_filename) >= 7.5 * 1024 * 1024:
@@ -763,26 +808,36 @@ def receive_data():
                     except Exception as e:
                         logging.error(f"디스코드 메시지 전송 실패 (이미지): {e}")
                 else:
-                    logging.error("이미지 전송 실패")
+                    response_text = "음성 메시지를 처리할 수 없습니다. 텍스트로 변환 중 오류가 발생했습니다."
 
                 # LLM 요청 - 사용자 음성 메시지를 그대로 처리
                 llm_response = generate_content_with_history(
                     system_prompt=system_prompt,
                     new_message=transcribed_text,
-                    image_path=resized_image_filename,
+                    image_path=resized_image_filename or "",
                     function_list=[get_search_results],
+                    k=HISTORY_SIZE,
                     history=Global_History
                 )
-                llm_response = dict(list(llm_response)[-1])['content']
+                
+                # 응답 텍스트 추출
+                response_text = "응답을 찾을 수 없습니다."
+                if isinstance(llm_response, list) and len(llm_response) >= 1:
+                    # 마지막 assistant 응답 가져오기
+                    for msg in reversed(llm_response):
+                        if isinstance(msg, dict) and msg.get("role") == "assistant":
+                            response_text = msg.get("content", "응답을 가져올 수 없습니다.")
+                            break
             else:
-                llm_response = "음성 메시지를 처리할 수 없습니다. 텍스트로 변환 중 오류가 발생했습니다."
+                response_text = "음성 메시지를 처리할 수 없습니다. 텍스트로 변환 중 오류가 발생했습니다."
             
             # Discord 메시지 전송: 텍스트(분석 결과)를 포함하여 한 번에 전송
+            executor = concurrent.futures.ThreadPoolExecutor()
             future_msg = executor.submit(lambda: asyncio.run_coroutine_threadsafe(
                 send_location_to_discord(
                     latitude, longitude, street, city,
-                    extra_message=llm_response,
-                    image_path=None,
+                    extra_message=response_text,
+                    image_path="",
                     audio_path=None,
                     show_places=False,
                     message_include=True
@@ -805,24 +860,40 @@ def receive_data():
             now_time = get_local_time_by_gps(latitude, longitude)
             executor = concurrent.futures.ThreadPoolExecutor()
             # 시스템 프롬프트 생성
-            system_prompt = System_Prompt(latitude, longitude, city, street, now_time, 4)
+            system_prompt = System_Prompt(latitude, longitude, city, street, extra_message, now_time, 4)
             
+            print("INPUT SYSTEM PROMPT: ", system_prompt)
+            print("INPUT EXTRA MESSAGE: ", extra_message)
             # LLM 요청 - 사용자 메시지를 그대로 처리
             llm_response = generate_content_with_history(
                 system_prompt=system_prompt,
                 new_message=extra_message,
                 function_list=[get_search_results, maps_search_nearby],
-                image_path=None,
+                image_path="",
+                k=HISTORY_SIZE,
                 history=Global_History
             )
-            llm_response = dict(list(llm_response)[-1])['content']
+            print("OUTPUT LLM RESPONSE: ", llm_response)
+            
+            # 응답 텍스트 추출
+            response_text = "응답을 찾을 수 없습니다."
+            if isinstance(llm_response, list) and len(llm_response) >= 1:
+                # 마지막 assistant 응답 가져오기
+                for msg in reversed(llm_response):
+                    if isinstance(msg, dict) and msg.get("role") == "assistant":
+                        response_text = msg.get("content", "응답을 가져올 수 없습니다.")
+                        break
+            
+            # 디버그 로깅 (Global_History 확인용)
+            logging.debug(f"Global_History 길이: {len(Global_History)}개 메시지")
 
             # Discord 메시지 전송: 텍스트(분석 결과)를 포함하여 한 번에 전송
+            executor = concurrent.futures.ThreadPoolExecutor()
             future_msg = executor.submit(lambda: asyncio.run_coroutine_threadsafe(
                 send_location_to_discord(
                     latitude, longitude, street, city,
-                    extra_message=llm_response,
-                    image_path=None,
+                    extra_message=response_text,  # llm_response 대신 response_text 사용
+                    image_path="",
                     audio_path=None,
                     show_places=False,
                     message_include=True
@@ -830,9 +901,10 @@ def receive_data():
             ).result())
             try:
                 future_msg.result(timeout=30)
+                logging.info("Discord 응답 전송 성공")
             except Exception as e:
-                logging.error(f"디스코드 메시지 전송 실패 (텍스트): {e}")
-
+                logging.error(f"Discord 응답 전송 실패: {e}")
+            
             executor.shutdown(wait=True)
             discord_sent = True
             return jsonify({'status': 'success'})
@@ -860,27 +932,37 @@ def receive_data():
                 now_time = get_local_time_by_gps(latitude, longitude)
                 
                 # 시스템 프롬프트 생성
-                system_prompt = System_Prompt(latitude, longitude, city, street, now_time, 4)
+                system_prompt = System_Prompt(latitude, longitude, city, street, transcribed_text, now_time, 4)
                 
                 # LLM 요청 - 사용자 음성 메시지를 그대로 처리
                 llm_response = generate_content_with_history(
                     system_prompt=system_prompt,
                     new_message=transcribed_text,
                     function_list=[get_search_results, maps_search_nearby],
-                    image_path=None,
+                    image_path="",
+                    k=HISTORY_SIZE,
                     history=Global_History
                 )
-                llm_response = dict(list(llm_response)[-1])['content']
+                
+                # 응답 텍스트 추출
+                response_text = "응답을 찾을 수 없습니다."
+                if isinstance(llm_response, list) and len(llm_response) >= 1:
+                    # 마지막 assistant 응답 가져오기
+                    for msg in reversed(llm_response):
+                        if isinstance(msg, dict) and msg.get("role") == "assistant":
+                            response_text = msg.get("content", "응답을 가져올 수 없습니다.")
+                            break
 
             else:
-                llm_response = "음성 메시지를 처리할 수 없습니다. 텍스트로 변환 중 오류가 발생했습니다."
+                response_text = "음성 메시지를 처리할 수 없습니다. 텍스트로 변환 중 오류가 발생했습니다."
 
             # Discord 메시지 전송: 텍스트(분석 결과)를 포함하여 한 번에 전송
+            executor = concurrent.futures.ThreadPoolExecutor()
             future_msg = executor.submit(lambda: asyncio.run_coroutine_threadsafe(
                 send_location_to_discord(
                     latitude, longitude, street, city,
-                    extra_message=llm_response,
-                    image_path=None,
+                    extra_message=response_text,
+                    image_path="",
                     audio_path=None,
                     show_places=False,
                     message_include=True
@@ -914,6 +996,7 @@ def receive_data():
                 llm_response = "제공된 정보를 처리했습니다."
 
             # Discord 메시지 전송: 텍스트(분석 결과)를 포함하여 한 번에 전송
+            executor = concurrent.futures.ThreadPoolExecutor()
             future_msg = executor.submit(lambda: asyncio.run_coroutine_threadsafe(
                 send_location_to_discord(
                     latitude, longitude, street, city,
@@ -937,10 +1020,10 @@ def receive_data():
         # 처리 결과 및 최종 메시지 정리
         # =====================================================================================
         if not discord_sent:
-            response_message = extra_message if extra_message else "처리된 데이터"
+            response_text = extra_message if extra_message else "처리된 데이터"
 
             if llm_response:
-                response_message = llm_response
+                response_text = llm_response
             
             executor = concurrent.futures.ThreadPoolExecutor()
 
@@ -955,8 +1038,8 @@ def receive_data():
             future = asyncio.run_coroutine_threadsafe(
                 send_location_to_discord(
                     latitude, longitude, street, city,
-                    extra_message=response_message,
-                    image_path=resized_image_filename,
+                    extra_message=response_text,
+                    image_path=resized_image_filename or "",
                     audio_path=response_audio if response_audio else audio_filename,
                     show_places=False  # 주변 장소 정보 표시하지 않음
                 ),
@@ -985,5 +1068,150 @@ def receive_data():
     except Exception as e:
         logging.exception("데이터 처리 중 에러:")
         return jsonify({"error": str(e)}), 500
+
+# Discord 메시지 처리 함수
+def process_discord_message(message_content, latitude=0, longitude=0, city="", street="", image_path=None, audio_path=None, channel_id=None):
+    """Discord에서 수신된 메시지를 처리하는 함수"""
+    logging.info("Discord 메시지 처리: " + message_content[:50] + "...")
+    
+    # 현재 시간 가져오기
+    now_time = get_local_time_by_gps(latitude, longitude)
+    
+    # 시스템 프롬프트 생성
+    system_prompt = System_Prompt(latitude, longitude, city, street, message_content, now_time, 4)
+    
+    executor = concurrent.futures.ThreadPoolExecutor()
+    
+    try:
+        print("INPUT MESSAGE CONTENT: ", message_content)
+        print("INPUT SYSTEM PROMPT: ", system_prompt)
+        # 이미지 파일이 있는 경우
+        if image_path and os.path.exists(image_path):
+            logging.info("이미지와 함께 메시지 처리")
+            
+            # LLM 요청 - 이미지 포함
+            llm_response = generate_content_with_history(
+                system_prompt=system_prompt,
+                new_message=message_content,
+                function_list=[get_search_results],
+                image_path=image_path,
+                k=HISTORY_SIZE,
+                history=Global_History
+            )
+        else:
+            # 텍스트만 있는 경우
+            logging.info("텍스트만 메시지 처리")
+            
+            # LLM 요청 - 텍스트만
+            llm_response = generate_content_with_history(
+                system_prompt=system_prompt,
+                new_message=message_content,
+                function_list=[get_search_results, maps_search_nearby],
+                image_path="",
+                k=HISTORY_SIZE,
+                history=Global_History
+            )
+        print("OUTPUT LLM RESPONSE: ", llm_response)
+        # 응답 추출
+        if isinstance(llm_response, list) and len(llm_response) >= 1:
+            # 마지막 assistant 응답 가져오기
+            for msg in reversed(llm_response):
+                if isinstance(msg, dict) and msg.get("role") == "assistant":
+                    response_text = msg.get("content", "응답을 가져올 수 없습니다.")
+                    break
+        
+        # 디버그 로깅 (길이 확인용)
+        logging.debug(f"응답 길이: {len(response_text)} 자")
+        if len(response_text) > 500:
+            logging.debug(f"응답 내용 일부: {response_text[:500]}...")
+        else:
+            logging.debug(f"응답 내용: {response_text}")
+        
+        # Discord로 응답 전송 (시스템 프롬프트가 아닌 LLM 응답만 전송)
+        if channel_id:
+            # 특정 채널로 전송
+            future_msg = executor.submit(lambda: asyncio.run_coroutine_threadsafe(
+                send_text_to_channel(response_text, channel_id),
+                bot.loop
+            ).result())
+        else:
+            # 기본 채널로 전송 - 필요할 때만 임포트
+            from discord_bot import send_location_to_discord
+            
+            future_msg = executor.submit(lambda: asyncio.run_coroutine_threadsafe(
+                send_location_to_discord(
+                    latitude, longitude, street, city,
+                    extra_message=response_text,
+                    image_path="",
+                    audio_path=None,
+                    show_places=False
+                ),
+                bot.loop
+            ).result())
+        
+        try:
+            future_msg.result(timeout=30)
+            logging.info("Discord 응답 전송 성공")
+        except Exception as e:
+            logging.error(f"Discord 응답 전송 실패: {e}")
+        
+        executor.shutdown(wait=True)
+        return response_text
+        
+    except Exception as e:
+        logging.error(f"Discord 메시지 처리 중 오류: {e}")
+        error_message = f"죄송합니다, 응답을 생성하는 중 오류가 발생했습니다: {str(e)}"
+        
+        # 오류 메시지 전송
+        if channel_id:
+            try:
+                future_err = executor.submit(lambda: asyncio.run_coroutine_threadsafe(
+                    send_text_to_channel(error_message, channel_id),
+                    bot.loop
+                ).result())
+                future_err.result(timeout=30)
+            except Exception as send_err:
+                logging.error(f"오류 메시지 전송 실패: {send_err}")
+        
+        executor.shutdown(wait=True)
+        return error_message
+
+# 채널에 텍스트 메시지를 안전하게 전송하는 유틸리티 함수
+async def send_text_to_channel(text, channel_id):
+    """지정된 채널에 텍스트 메시지를 전송합니다. 긴 메시지는 자동 분할됩니다."""
+    try:
+        # 채널 객체 가져오기 시도
+        channel = bot.get_channel(channel_id)
+        
+        # TextChannel 또는 DMChannel 타입 확인
+        if channel and isinstance(channel, (discord.TextChannel, discord.DMChannel)):
+            # 메시지 길이가 2000자를 초과하면 분할 전송
+            if len(text) > 2000:
+                chunks = [text[i:i+1900] for i in range(0, len(text), 1900)]
+                for j, chunk in enumerate(chunks):
+                    await channel.send(content=f"메시지 파트 {j+1}/{len(chunks)}:\n{chunk}")
+                    await asyncio.sleep(1)  # API 제한 방지
+            else:
+                await channel.send(content=text)
+            return True
+        
+        # 채널을 찾을 수 없거나 메시지를 보낼 수 없는 유형인 경우 기본 채널 시도
+        default_channel = bot.get_channel(CHANNEL_ID)
+        if default_channel and isinstance(default_channel, discord.TextChannel):
+            # 메시지 길이가 2000자를 초과하면 분할 전송
+            if len(text) > 2000:
+                chunks = [text[i:i+1900] for i in range(0, len(text), 1900)]
+                for j, chunk in enumerate(chunks):
+                    await default_channel.send(content=f"메시지 파트 {j+1}/{len(chunks)}:\n{chunk}")
+                    await asyncio.sleep(1)  # API 제한 방지
+            else:
+                await default_channel.send(content=text)
+            return True
+            
+        logging.error(f"메시지를 전송할 수 있는 유효한 채널을 찾을 수 없습니다. channel_id: {channel_id}")
+        return False
+    except Exception as e:
+        logging.error(f"채널에 메시지 전송 실패: {e}")
+        return False
 
 # %%

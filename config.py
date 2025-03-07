@@ -17,6 +17,7 @@ RESPONSE_FOLDER = os.getenv('RESPONSE_FOLDER', 'responses')
 HOST = os.getenv('HOST', '0.0.0.0')
 PORT = int(os.getenv('PORT', 5000))
 DEBUG = os.getenv('DEBUG', 'False').lower() == 'true'
+HISTORY_SIZE = 10
 
 # 업로드 폴더 생성
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)

@@ -4,6 +4,7 @@ import logging
 import asyncio
 import discord
 from .bot import bot, get_channel
+from config import CHANNEL_ID
 from utils import search_nearby_places, compute_route_matrix
 from utils.gemini import gemini_bot
 
@@ -123,75 +124,63 @@ async def on_message(message):
     # 봇 명령어 처리를 위한 기본 처리
     await bot.process_commands(message)
     
-    # 메시지 내용이 있고, 봇이 언급되었거나 DM인 경우에만 처리
+    # 답장 여부 확인 추가
+    is_reply_to_bot = False
+    if message.reference and message.reference.message_id and bot.user is not None:
+        try:
+            ref_msg = await message.channel.fetch_message(message.reference.message_id)
+            is_reply_to_bot = ref_msg.author is not None and ref_msg.author.id == bot.user.id
+        except Exception as e:
+            logging.error(f"답장 메시지 확인 중 오류: {e}")
+    
+    # 메시지 내용이 있고, 봇이 언급되었거나 DM이거나 지정된 채널에서 온 경우에만 처리
     is_dm = isinstance(message.channel, discord.DMChannel)
     is_mentioned = bot.user in message.mentions
+    is_target_channel = message.channel.id == CHANNEL_ID  # router가 수신하는 채널인지 확인
     
-    if message.content and (is_dm or is_mentioned) and bot.user is not None:
-        # 봇 멘션 제거
-        clean_content = message.content.replace(f'<@{bot.user.id}>', '').strip()
-        
-        # 이미지나 오디오 파일이 있는지 확인하고 저장
-        image_path = None
-        audio_path = None
-        
-        if message.attachments:
-            for attachment in message.attachments:
-                # 이미지 파일 처리
-                if attachment.filename.lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.webp')):
-                    image_path = f"uploads/discord_{attachment.filename}"
-                    await attachment.save(image_path)
-                    logging.info(f"디스코드로부터 이미지 저장: {image_path}")
-                    break
+    if message.content and (is_dm or is_mentioned or is_reply_to_bot or is_target_channel) and bot.user is not None:
+        # typing 표시로 처리 중임을 사용자에게 알림
+        async with message.channel.typing():
+            # 봇 멘션 제거
+            clean_content = message.content.replace(f'<@{bot.user.id}>', '').strip()
+            
+            # 이미지나 오디오 파일이 있는지 확인하고 저장
+            image_path = None
+            audio_path = None
+            
+            if message.attachments:
+                for attachment in message.attachments:
+                    # 이미지 파일 처리
+                    if attachment.filename.lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.webp')):
+                        image_path = f"uploads/discord_{attachment.filename}"
+                        await attachment.save(image_path)
+                        logging.info(f"디스코드로부터 이미지 저장: {image_path}")
+                        break
+                    
+                    # 오디오 파일 처리
+                    elif attachment.filename.lower().endswith(('.mp3', '.wav', '.ogg', '.m4a')):
+                        audio_path = f"uploads/discord_{attachment.filename}"
+                        await attachment.save(audio_path)
+                        logging.info(f"디스코드로부터 오디오 저장: {audio_path}")
+                        break
+            
+            # routes.py의 process_discord_message 함수를 실행 시점에 import하여 호출
+            try:
+                # 원형 참조 방지를 위해 필요할 때만 import
+                from api.routes import process_discord_message
                 
-                # 오디오 파일 처리
-                elif attachment.filename.lower().endswith(('.mp3', '.wav', '.ogg', '.m4a')):
-                    audio_path = f"uploads/discord_{attachment.filename}"
-                    await attachment.save(audio_path)
-                    logging.info(f"디스코드로부터 오디오 저장: {audio_path}")
-                    break
-        
-        # 메시지 처리 - Gemini API 사용
-        try:
-            from utils.gemini import gemini_bot
-            from utils.new_utils import get_local_time_by_gps, generate_content_with_history
-            import os
-            
-            # Gemini 프롬프트 생성
-            system_prompt = """
-당신은 여행자를 돕는 친절한 AI 어시스턴트입니다. 사용자가 보낸 메시지에 대해 상세하고 유용한 정보를 제공해 주세요.
-위치 정보나 여행 계획에 관련된 질문에 특히 잘 대답해주세요.
-한국어로 친절하고 도움이 되는 응답을 제공해 주세요.
-"""
-            # 히스토리 초기화
-            history = []
-            
-            if image_path and os.path.exists(image_path):
-                # 이미지가 있는 경우
-                response = gemini_bot(
-                    system_prompt=system_prompt,
-                    user_input=clean_content,
-                    image_path=image_path
+                await asyncio.to_thread(
+                    process_discord_message,
+                    message_content=clean_content,
+                    image_path=image_path,
+                    audio_path=audio_path,
+                    channel_id=message.channel.id
                 )
-            else:
-                # 텍스트만 있는 경우
-                response = generate_content_with_history(
-                    system_prompt=system_prompt,
-                    new_message=clean_content,
-                    function_list=[],
-                    image_path="",
-                    k=7,
-                    history=history
-                )
-                response = dict(list(response)[1])['content']
-            
-            # 응답 전송
-            await message.channel.send(response)
-            
-        except Exception as e:
-            logging.error(f"메시지 처리 중 오류: {e}")
-            await message.channel.send(f"죄송합니다, 응답을 생성하는 중 오류가 발생했습니다: {str(e)}")
+            except Exception as e:
+                logging.error(f"routes.py 함수 호출 중 오류: {e}")
+                await message.channel.send(f"죄송합니다, 오류가 발생했습니다: {str(e)}")
 
+    # 답장 메시지 처리 (기존 코드 유지)
     from discord import MessageReference
     if message.reference is not None:
         reference: MessageReference = message.reference

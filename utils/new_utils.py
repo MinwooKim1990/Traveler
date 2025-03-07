@@ -68,17 +68,34 @@ def generate_content_with_history(system_prompt: str, new_message: str, function
         history = []
     
     # 최신 k 턴의 히스토리만 유지 (시스템 프롬프트는 항상 맨 앞에 유지)
-    if len(history) > k:
-        history = history[-k:]
+    if len(history) > k * 2:  # 쌍으로 계산하므로 k*2
+        history = history[-(k*2):]
     
     # 대화 내용 구성: Gemini API에 맞는 형식으로 구성
     client = genai.Client(api_key=GEMINI_API_KEY)
     
-    # 시스템 프롬프트 구성
-    system_message = {"role": "system", "parts": [{"text": system_prompt}]}
+    # 히스토리를 Gemini 포맷으로 변환
+    gemini_messages = []
+    
+    # 시스템 메시지 추가
+    gemini_messages.append(system_prompt)
+    
+    # 기존 대화 히스토리 추가
+    for i in range(0, len(history), 2):
+        if i+1 < len(history):  # 쌍이 완성된 경우만
+            user_msg = history[i]['content']
+            assistant_msg = history[i+1]['content']
+            gemini_messages.append(user_msg)
+            gemini_messages.append(assistant_msg)
+    
+    # 새 사용자 메시지 추가
+    gemini_messages.append(new_message)
+    
+    print("히스토리 길이:", len(history))
+    print("API에 보내는 메시지 수:", len(gemini_messages))
     
     try:
-        if image_path is None:
+        if image_path is None or image_path == "":
             print("No image conversation")
             
             if function_list is not None:
@@ -87,43 +104,78 @@ def generate_content_with_history(system_prompt: str, new_message: str, function
                 response = client.models.generate_content(
                     model='gemini-2.0-flash-lite',
                     config=config,
-                    contents=[system_prompt, new_message]
+                    contents=gemini_messages  # 전체 대화 히스토리 포함
                 )
             else:
                 print("No function list")
                 response = client.models.generate_content(
                     model='gemini-2.0-flash-lite',
-                    contents=[system_prompt, new_message]
+                    contents=gemini_messages  # 전체 대화 히스토리 포함
                 )
             
         else:
             print("Image conversation")
-            image = PIL.Image.open(image_path)
-            
-            if function_list is not None:
-                print("Function list with image")
-                config = {"tools": function_list}
-                response = client.models.generate_content(
-                    model='gemini-2.0-flash-lite',
-                    config=config,
-                    contents=[system_prompt, new_message, image]
-                )
+            # 이미지 파일이 존재하는지 확인
+            if os.path.exists(image_path):
+                image = PIL.Image.open(image_path)
+                
+                # 이미지가 포함된 메시지는 히스토리의 마지막 메시지와 병합해야 함
+                # 마지막 메시지를 제외한 히스토리 구성
+                image_messages = gemini_messages[:-1]
+                
+                # 이미지와 마지막 텍스트 메시지를 함께 추가
+                final_message = [new_message, image]
+                
+                if function_list is not None:
+                    print("Function list with image")
+                    config = {"tools": function_list}
+                    response = client.models.generate_content(
+                        model='gemini-2.0-flash-lite',
+                        config=config,
+                        contents=image_messages + [final_message]  # 히스토리 + 이미지 메시지
+                    )
+                else:
+                    print("No function list with image")
+                    response = client.models.generate_content(
+                        model='gemini-2.0-flash-lite',
+                        contents=image_messages + [final_message]  # 히스토리 + 이미지 메시지
+                    )
             else:
-                print("No function list with image")
-                response = client.models.generate_content(
-                    model='gemini-2.0-flash-lite',
-                    contents=[system_prompt, new_message, image]
-                )
+                # 이미지 파일이 존재하지 않으면 텍스트만 처리
+                print("Image file not found, fallback to text only")
+                if function_list is not None:
+                    config = {"tools": function_list}
+                    response = client.models.generate_content(
+                        model='gemini-2.0-flash-lite',
+                        config=config,
+                        contents=gemini_messages  # 전체 대화 히스토리 포함
+                    )
+                else:
+                    response = client.models.generate_content(
+                        model='gemini-2.0-flash-lite',
+                        contents=gemini_messages  # 전체 대화 히스토리 포함
+                    )
         
         # 히스토리 업데이트
-        history.append({"role": "user", "content": new_message})
-        history.append({"role": "assistant", "content": response.text})
-        
-        print(response.text)
-        return history
+        try:
+            history.append({"role": "user", "content": new_message})
+            history.append({"role": "assistant", "content": response.text})
+            
+            print(response.text)
+            return history
+        except AttributeError:
+            # response.text가 없는 경우
+            print("응답에 text 속성이 없습니다.")
+            history.append({"role": "user", "content": new_message})
+            history.append({"role": "assistant", "content": "응답을 생성할 수 없습니다."})
+            return history
     except ValueError as ve:
         print("ValueError가 발생했습니다:", ve)
+        history.append({"role": "user", "content": new_message})
+        history.append({"role": "assistant", "content": f"오류: {str(ve)}"})
         return history
     except Exception as e:
         print("예기치 않은 오류가 발생했습니다:", e)
+        history.append({"role": "user", "content": new_message})
+        history.append({"role": "assistant", "content": f"오류: {str(e)}"})
         return history
