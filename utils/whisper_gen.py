@@ -101,77 +101,116 @@ def synthesize_text(text: str, output_audio: str = "output.mp3", gender: str = "
         gender (str): 성별 선택 ('male' 또는 'female')
         speed (float): 읽기 속도 (1.0이 기본 속도)
     """
-    # 서비스 계정 키 JSON 파일 경로 설정
-    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "TTS.json"
-
-    # 음성 선택 매핑
-    voice_mapping = {
-        "ko": {
-            "female": "ko-KR-Chirp3-HD-Leda",  # 한국어 여성
-            "male": "ko-KR-Chirp3-HD-Charon"     # 한국어 남성
-        },
-        "en": {
-            "female": "en-GB-Chirp3-HD-Aoede",   # 영국 영어 여성
-            "male": "en-GB-Chirp3-HD-Charon"      # 영국 영어 남성 (가정)
-        },
-        "ja": {
-            "female": "ja-JP-Chirp3-HD-Leda",  # 일본어 여성
-            "male": "ja-JP-Chirp3-HD-Fenrir"     # 일본어 남성
+    try:
+        # 텍스트 전처리 - 마크다운 기호 및 불필요한 공백 제거
+        text = re.sub(r'[*_`~#]', '', text)  # 마크다운 기호 제거
+        text = re.sub(r'\n+', '...', text)  # 여러 줄바꿈을 공백으로
+        text = re.sub(r'\s+', ' ', text)  # 여러 공백을 하나의 공백으로
+        text = text.strip()  # 앞뒤 공백 제거
+        if text[:3] == "...":
+            print("front: ",text)
+            text = text[3:]
+            print("front_after: ",text)
+        if text[-3:] == "...":
+            print("back: ",text)
+            text = text[:-3]
+            print("back_after: ",text)
+        # 서비스 계정 키 JSON 파일 경로 설정
+        credentials_paths = ["utils/TTS.json", "TTS.json", "../utils/TTS.json", "../TTS.json"]
+        credentials_found = False
+        
+        for path in credentials_paths:
+            if os.path.exists(path):
+                os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = path
+                credentials_found = True
+                break
+        
+        if not credentials_found:
+            print("경고: TTS.json 파일을 찾을 수 없습니다. 음성 합성이 실패할 수 있습니다.")
+        
+        # 음성 선택 매핑
+        voice_mapping = {
+            "ko": {
+                "female": "ko-KR-Chirp3-HD-Leda",  # 한국어 여성
+                "male": "ko-KR-Chirp3-HD-Charon"     # 한국어 남성
+            },
+            "en": {
+                "female": "en-GB-Chirp3-HD-Aoede",   # 영국 영어 여성
+                "male": "en-GB-Chirp3-HD-Charon"      # 영국 영어 남성 (가정)
+            },
+            "ja": {
+                "female": "ja-JP-Chirp3-HD-Leda",  # 일본어 여성
+                "male": "ja-JP-Chirp3-HD-Fenrir"     # 일본어 남성
+            }
         }
-    }
-    
-    # 언어 코드 매핑
-    language_code_mapping = {
-        "ko": "ko-KR",
-        "en": "en-GB",
-        "ja": "ja-JP"
-    }
-    
-    # SSML 성별 매핑
-    gender_mapping = {
-        "male": texttospeech.SsmlVoiceGender.MALE,
-        "female": texttospeech.SsmlVoiceGender.FEMALE
-    }
-    language = detect_language(text)
-    print(f"감지된 언어: {language}")
-    # 입력 매개변수 검증
-    if language not in language_code_mapping:
-        raise ValueError(f"지원되지 않는 언어입니다: {language}. 지원되는 언어: ko, en, ja")
-    
-    if gender not in gender_mapping:
-        raise ValueError(f"지원되지 않는 성별입니다: {gender}. 지원되는 성별: male, female")
-    
-    # TTS 클라이언트 초기화
-    client = texttospeech.TextToSpeechClient()
-    
-    # 입력 텍스트 설정
-    input_text = texttospeech.SynthesisInput(text=text)
-    
-    # 음성 매개변수 설정
-    voice_name = voice_mapping[language][gender]
-    language_code = language_code_mapping[language]
-    
-    voice = texttospeech.VoiceSelectionParams(
-        language_code=language_code,
-        name=voice_name,
-        ssml_gender=gender_mapping[gender]
-    )
-    
-    # 오디오 구성 설정 (속도 포함)
-    audio_config = texttospeech.AudioConfig(
-        audio_encoding=texttospeech.AudioEncoding.MP3,
-        speaking_rate=speed  # 읽기 속도 설정
-    )
-    
-    # 음성 합성 수행
-    response = client.synthesize_speech(
-        input=input_text, voice=voice, audio_config=audio_config
-    )
-    
-    # 결과 오디오 저장
-    with open(output_audio, "wb") as out:
-        out.write(response.audio_content)
-        print(f'Audio content written to file "{output_audio}"')
-    
-    return output_audio
+        
+        # 언어 코드 매핑
+        language_code_mapping = {
+            "ko": "ko-KR",
+            "en": "en-GB",
+            "ja": "ja-JP"
+        }
+        
+        # SSML 성별 매핑
+        gender_mapping = {
+            "male": texttospeech.SsmlVoiceGender.MALE,
+            "female": texttospeech.SsmlVoiceGender.FEMALE
+        }
+        
+        language = detect_language(text)
+        print(f"감지된 언어: {language}")
+        
+        # 입력 매개변수 검증
+        if language not in language_code_mapping:
+            print(f"지원되지 않는 언어입니다: {language}. 기본값 'ko'로 설정합니다.")
+            language = "ko"
+        
+        if gender not in gender_mapping:
+            print(f"지원되지 않는 성별입니다: {gender}. 기본값 'female'로 설정합니다.")
+            gender = "female"
+        
+        # TTS 클라이언트 초기화
+        try:
+            client = texttospeech.TextToSpeechClient()
+            
+            # 입력 텍스트 설정
+            input_text = texttospeech.SynthesisInput(text=text)
+            
+            # 음성 매개변수 설정
+            voice_name = voice_mapping[language][gender]
+            language_code = language_code_mapping[language]
+            
+            voice = texttospeech.VoiceSelectionParams(
+                language_code=language_code,
+                name=voice_name,
+                ssml_gender=gender_mapping[gender]
+            )
+            
+            # 오디오 구성 설정 (속도 포함)
+            audio_config = texttospeech.AudioConfig(
+                audio_encoding=texttospeech.AudioEncoding.MP3,
+                speaking_rate=speed  # 읽기 속도 설정
+            )
+            
+            print(f"TTS 변환 텍스트: {text[:100]}...")
+            
+            # 음성 합성 수행
+            response = client.synthesize_speech(
+                input=input_text, voice=voice, audio_config=audio_config
+            )
+            
+            # 결과 오디오 저장
+            with open(output_audio, "wb") as out:
+                out.write(response.audio_content)
+                print(f'Audio content written to file "{output_audio}"')
+            
+            return output_audio
+            
+        except Exception as e:
+            print(f"TTS 클라이언트 초기화 또는 음성 합성 중 오류 발생: {e}")
+            return False
+            
+    except Exception as e:
+        print(f"음성 합성 중 예상치 못한 오류 발생: {e}")
+        return False
 # %%

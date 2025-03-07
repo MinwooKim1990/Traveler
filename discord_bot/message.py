@@ -48,7 +48,7 @@ async def send_location_to_discord(latitude, longitude, street, city, extra_mess
         # show_places가 True인 경우에만 주변 장소 정보 추가
         if show_places:
             # 주변 장소 검색
-            filtered_places = search_nearby_places(lat1, lng1)
+            filtered_places = search_nearby_places(lat1, lng1, keyword="restaurant")
             message_parts.append(f"\n**총 {len(filtered_places)}개의 장소 정보가 필터링되었습니다.**")
             
             # 각 장소별 정보 추가
@@ -127,40 +127,69 @@ async def on_message(message):
     is_dm = isinstance(message.channel, discord.DMChannel)
     is_mentioned = bot.user in message.mentions
     
-    if message.content and (is_dm or is_mentioned):
+    if message.content and (is_dm or is_mentioned) and bot.user is not None:
         # 봇 멘션 제거
         clean_content = message.content.replace(f'<@{bot.user.id}>', '').strip()
         
-        # 이미지가 있는지 확인
+        # 이미지나 오디오 파일이 있는지 확인하고 저장
         image_path = None
+        audio_path = None
+        
         if message.attachments:
             for attachment in message.attachments:
+                # 이미지 파일 처리
                 if attachment.filename.lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.webp')):
-                    # 이미지를 로컬에 저장
                     image_path = f"uploads/discord_{attachment.filename}"
                     await attachment.save(image_path)
                     logging.info(f"디스코드로부터 이미지 저장: {image_path}")
                     break
+                
+                # 오디오 파일 처리
+                elif attachment.filename.lower().endswith(('.mp3', '.wav', '.ogg', '.m4a')):
+                    audio_path = f"uploads/discord_{attachment.filename}"
+                    await attachment.save(audio_path)
+                    logging.info(f"디스코드로부터 오디오 저장: {audio_path}")
+                    break
         
-        # Gemini API를 사용하여 응답 생성
+        # 메시지 처리 - Gemini API 사용
         try:
+            from utils.gemini import gemini_bot
+            from utils.new_utils import get_local_time_by_gps, generate_content_with_history
+            import os
+            
             # Gemini 프롬프트 생성
             system_prompt = """
 당신은 여행자를 돕는 친절한 AI 어시스턴트입니다. 사용자가 보낸 메시지에 대해 상세하고 유용한 정보를 제공해 주세요.
 위치 정보나 여행 계획에 관련된 질문에 특히 잘 대답해주세요.
 한국어로 친절하고 도움이 되는 응답을 제공해 주세요.
 """
-            response = gemini_bot(
-                system_prompt=system_prompt,
-                user_input=clean_content,
-                image_path=image_path
-            )
+            # 히스토리 초기화
+            history = []
+            
+            if image_path and os.path.exists(image_path):
+                # 이미지가 있는 경우
+                response = gemini_bot(
+                    system_prompt=system_prompt,
+                    user_input=clean_content,
+                    image_path=image_path
+                )
+            else:
+                # 텍스트만 있는 경우
+                response = generate_content_with_history(
+                    system_prompt=system_prompt,
+                    new_message=clean_content,
+                    function_list=[],
+                    image_path="",
+                    k=7,
+                    history=history
+                )
+                response = dict(list(response)[1])['content']
             
             # 응답 전송
             await message.channel.send(response)
             
         except Exception as e:
-            logging.error(f"Gemini API 호출 중 오류: {e}")
+            logging.error(f"메시지 처리 중 오류: {e}")
             await message.channel.send(f"죄송합니다, 응답을 생성하는 중 오류가 발생했습니다: {str(e)}")
 
     from discord import MessageReference

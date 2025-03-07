@@ -16,7 +16,11 @@ from utils.whisper_gen import transcribe_audio, synthesize_text
 from utils import search_nearby_places as maps_search_nearby
 from utils.image_resize import resize_image
 from utils.new_utils import get_local_time_by_gps, get_search_results, generate_content_with_history, generate_unique_filename
-    
+
+Global_History = []
+restaurant_history = []
+image_without_message_history = []
+
 # 응답 저장 폴더 생성
 os.makedirs(RESPONSE_FOLDER, exist_ok=True)
 
@@ -183,23 +187,30 @@ Use the user's current location and time from user prompt to make the conversati
         return f"""
 # Multimodal Assistant
 
+============================================================
 ## Primary Role
+============================================================
 You are a specialized multimodal assistant with functions based on user's current location and time.
 
+============================================================
 ## Core Responsibilities
+============================================================
 - Be aware of user's current location (latitude/longitude) and time Not always use but you can use whenever you needed.
 - Use a friendly, detailed communication style
 - Analyze an image and determine if it is an **artwork, museum artifact, general photo, or text/document in a foreign language**.  
 - Provide detailed **historical and artistic insights** for artworks, engage in a **friendly conversation** for general photos, and offer **translation and analysis** for foreign language text.
 - **Following these responsibilities if user does not provide any prompt but if user provide prompt, you must follow user's prompt based on these instructions.**
 
+============================================================
 ### **Step 1: Identify Image Type**
+============================================================
 - **Is it an artwork or museum artifact?** → If yes, proceed to `Step 2: Artwork Analysis`
 - **Is it a general photo (landscape, people, objects, pets, etc.)?** → If yes, proceed to `Step 3: Friendly Conversation`
 - **Does it contain text in a foreign language (signs, menus, documents)?** → If yes, proceed to `Step 4: Foreign Text Analysis`
----
 
+------------------------------------------------------------
 ### **Step 2: Artwork or Museum Artifact Analysis**
+------------------------------------------------------------
 > Provide an in-depth analysis covering these essential elements:
 
 #### **1. Basic Information**
@@ -230,9 +241,9 @@ You are a specialized multimodal assistant with functions based on user's curren
 - How has this artwork influenced other artists or movements?
 - How is it perceived in modern times?
 
----
-
+------------------------------------------------------------
 ### **Step 3: Friendly Conversation for General Photos**
+------------------------------------------------------------
 > If the image is NOT an artwork or museum artifact, engage with the user in a friendly and interactive manner.
 Use the user's current location and time from user prompt to make the conversation more engaging.
 
@@ -247,16 +258,16 @@ Use the user's current location and time from user prompt to make the conversati
 - **Nature:** "Such a peaceful view! Where was this taken?"
 - **Selfies:** "Great shot! What was the occasion?"
 
----
-
+------------------------------------------------------------
 ### **Step 4: Foreign Text Analysis**
+------------------------------------------------------------
 > If the image contains text in a non-user prompt language (signs, menus, documents, etc.), provide a comprehensive analysis:
 
 #### **1. Text Identification & Translation**
 - Identify the language of the text
 - Transcribe the original text
 - Provide a complete translation in user prompt language
-- Show original text in parentheses next to translation to understand foreign text in the image well.
+- **MUST Show original text of image in parentheses next to translation to understand foreign text in the image well. ex) foods(음식), philates(필라테스), etc.**
 
 #### **2. Content Analysis**
 - For menus: Explain dishes, ingredients, pricing, and specialties
@@ -273,18 +284,22 @@ Use the user's current location and time from user prompt to make the conversati
 - For signs: Explain directions, warnings, or instructions
 - For documents: Highlight important details the user should know
 
----
-
+============================================================
 ## Location and Time Parameters
+============================================================
 - Use the provided `{latitude}`, `{longitude}`, `{city}`, `{street}`, and `{now_time}` as the basis for recommendations
 - These parameters represent the user's current context for providing relevant suggestions
 
+============================================================
 ## Response Guidelines
+============================================================
 - **MUST Respond to prompts in languages in their respective language from user prompt**
 - Provide friendly, appropriately-sized responses based on the user's query
 - Adjust detail level based on the nature of the user's request
 
+============================================================
 ## Using Internet Search Function
+============================================================
 1. **Gather Data**: Determine when you need information you don't know or need to be updated.
 2. **Use get_search_results function**: Use function call to retrieve several search results by DuckDuckGo
 
@@ -297,8 +312,9 @@ Use the user's current location and time from user prompt to make the conversati
    - Include relevant citations as references at the end of your response
    - Translate if needed - ensure all information is presented in the user's preferred language regardless of the language of search results
 
-
+============================================================
 ## Using Nearby Search Function
+============================================================
 1. **Gather Data**: Determine when you need information you don't know or need to be updated.
 2. **Use maps_search_nearby function**: Use function call to retrieve several search results by Google Maps
    ```
@@ -313,18 +329,23 @@ Use the user's current location and time from user prompt to make the conversati
    - Present 5 best matches to the user based on distance, rate, name and explain why you recommend them
    - Translate if needed - ensure all information is presented in the user's preferred language regardless of the language of search results
 
+============================================================
 ## Recommendation Format
+============================================================
 For each selected restaurant, provide:
 - Use Natural language to user whether you use function or not
 - If you use function, provide more structured and detailed information about the search results
 
+============================================================
 ## Output Requirements
+============================================================
 - Match response language to input language
 - Use polite, friendly tone
 - Write in Markdown format for better readability
 - Include references to search results when applicable
 
 """
+
     elif selection == 4:
         return f"""
 # Multimodal Assistant
@@ -356,7 +377,8 @@ You are a specialized assistant based on user's current location and time.
    - Process search results by analyzing the returned titles and snippets
    - Summarize the information in the user's input language, even if search results are in different languages
    - Include relevant citations as references at the end of your response
-   - Translate if needed - ensure all information is presented in the user's preferred language regardless of the language of search results
+   - **Citations Must not follwing Markdown format ex) Using only URL in parenthesis (https://www.apple.com/newsroom/) instead of [https://www.apple.com/newsroom/](https://www.apple.com/newsroom/)**
+   - Translate if needed - ensure all information is presented in the user's input language regardless of the language of search results
 
 
 ## Using Nearby Search Function
@@ -372,7 +394,7 @@ You are a specialized assistant based on user's current location and time.
    - Process search results by analyzing the returned titles and snippets
    - Summarize the information in the user's input language, even if search results are in different languages
    - Present 5 best matches to the user based on distance, rate, name and explain why you recommend them
-   - Translate if needed - ensure all information is presented in the user's preferred language regardless of the language of search results
+   - Translate if needed - ensure all information is presented in the user's input language regardless of the language of search results
 
 ## Recommendation Format
 For each selected restaurant, provide:
@@ -380,7 +402,7 @@ For each selected restaurant, provide:
 - If you use function, provide more structured and detailed information about the search results
 
 ## Output Requirements
-- Match response language to input language
+- **MUST Match response language to input language**
 - Use polite, friendly tone
 - Write in Markdown format for better readability
 - Include references to search results when applicable
@@ -403,6 +425,9 @@ def receive_data():
         key = request.headers.get("X-API-Key")
         if key != API_KEY:
             return jsonify({"error": "Invalid API Key"}), 403
+
+        # 요청 소스 확인 (디스코드 채팅인지 일반 POST 요청인지)
+        is_discord = request.form.get("source") == "discord"
 
         # 🌍 GPS 데이터 받기 (form-data의 text 필드에 key=value 형태로 전달)
         gps_data = request.form.get("text", "")
@@ -427,8 +452,9 @@ def receive_data():
         image_filename = None
         
         if image and image.filename:
-            # 고유한 이미지 파일 이름 생성
-            new_image_filename = generate_unique_filename("image", image.filename)
+            # 고유한 이미지 파일 이름 생성 (디스코드에서 온 경우 discord_ 접두사 추가)
+            prefix = "discord_" if is_discord else ""
+            new_image_filename = generate_unique_filename(f"{prefix}image", image.filename)
             image_filename = os.path.join(UPLOAD_FOLDER, new_image_filename)
             image.save(image_filename)
             logging.debug(f"이미지 저장: {image_filename} (원본: {image.filename})")
@@ -438,8 +464,9 @@ def receive_data():
         audio_filename = None
         
         if audio and audio.filename:
-            # 고유한 오디오 파일 이름 생성
-            new_audio_filename = generate_unique_filename("audio", audio.filename)
+            # 고유한 오디오 파일 이름 생성 (디스코드에서 온 경우 discord_ 접두사 추가)
+            prefix = "discord_" if is_discord else ""
+            new_audio_filename = generate_unique_filename(f"{prefix}audio", audio.filename)
             audio_filename = os.path.join(UPLOAD_FOLDER, new_audio_filename)
             audio.save(audio_filename)
             logging.debug(f"음성 저장: {audio_filename} (원본: {audio.filename})")
@@ -451,6 +478,49 @@ def receive_data():
         llm_response = None
         response_audio = None
         
+        # 디스코드 채팅에서 온 요청 처리
+        if is_discord:
+            logging.info("디스코드 채팅에서 온 요청 처리")
+            now_time = get_local_time_by_gps(latitude, longitude) if latitude and longitude else ""
+            
+            # 시스템 프롬프트 생성
+            system_prompt = System_Prompt(latitude, longitude, city, street, now_time, 4)
+            
+            function_list = [maps_search_nearby, get_search_results]
+            
+            llm_response = generate_content_with_history(
+                system_prompt=system_prompt,
+                new_message=extra_message,
+                function_list=function_list,
+                image_path=image_filename if image_filename else "",
+                k=7,
+                history=Global_History
+            )
+            llm_response = dict(list(llm_response)[-1])['content']
+            
+            # 디스코드로 응답 전송
+            executor = concurrent.futures.ThreadPoolExecutor()
+            future_msg = executor.submit(lambda: asyncio.run_coroutine_threadsafe(
+                send_location_to_discord(
+                    latitude, longitude, street, city,
+                    extra_message=llm_response,
+                    image_path=None,
+                    audio_path=None,
+                    show_places=False,
+                    message_include=True
+                ), bot.loop
+            ).result())
+            
+            try:
+                future_msg.result(timeout=30)
+            except Exception as e:
+                logging.error(f"디스코드 메시지 전송 실패: {e}")
+            
+            executor.shutdown(wait=True)
+            discord_sent = True
+            return jsonify({'status': 'success', 'source': 'discord'})
+        
+        # 이하 기존 코드 - POST 요청 처리
         # =====================================================================================
         # 1. GPS만 있는 경우 - 주변 맛집 추천 (function call 사용)
         # =====================================================================================
@@ -460,7 +530,6 @@ def receive_data():
             now_time = get_local_time_by_gps(latitude, longitude)
             # 시스템 프롬프트 생성
             system_prompt = System_Prompt(latitude, longitude, city, street, now_time, 1)
-            restaurant_history = []
             # LLM 요청 - 실제 검색 결과를 바탕으로 추천 생성
             llm_response = generate_content_with_history(
                 system_prompt=system_prompt,
@@ -470,7 +539,7 @@ def receive_data():
                 k=7,
                 history=restaurant_history
             )
-            llm_response = dict(list(llm_response)[1])['content']
+            llm_response = dict(list(llm_response)[-1])['content']
             print(llm_response)
 
             # Discord 메시지 전송: 맛집 텍스트(분석 결과)를 포함하여 한 번에 전송
@@ -530,7 +599,6 @@ def receive_data():
             else:
                 logging.error("이미지 전송 실패")
 
-            image_without_message_history = []
             # Gemini 분석 호출
             llm_response = generate_content_with_history(
                 system_prompt=system_prompt,
@@ -540,7 +608,7 @@ def receive_data():
                 function_list=None,
                 history=image_without_message_history
             )
-            llm_response = dict(list(llm_response)[1])['content']
+            llm_response = dict(list(llm_response)[-1])['content']
 
             # Discord 메시지 전송: 텍스트(분석 결과)를 포함하여 한 번에 전송
             future_msg = executor.submit(lambda: asyncio.run_coroutine_threadsafe(
@@ -559,10 +627,8 @@ def receive_data():
                 logging.error(f"디스코드 메시지 전송 실패 (텍스트): {e}")
 
             # TTS: 음성 합성
-            import re
-            audio_text = re.sub(r'[*_`~#]', '', llm_response)
             response_audio_filename = os.path.join(RESPONSE_FOLDER, f"response_{int(time.time())}.mp3")
-            tts_success = synthesize_text(audio_text, response_audio_filename, gender="female", speed=1.1)
+            tts_success = synthesize_text(llm_response, response_audio_filename, gender="female", speed=1.1)
             if tts_success:
                 future_audio = executor.submit(lambda: asyncio.run_coroutine_threadsafe(
                     send_location_to_discord(
@@ -620,15 +686,15 @@ def receive_data():
             else:
                 logging.error("이미지 전송 실패")
 
-            image_message_gps_history = []
             # 사용자 메시지를 그대로 프롬프트로 사용
             llm_response = generate_content_with_history(
                 system_prompt=system_prompt,
                 new_message=extra_message,
                 image_path=resized_image_filename,
-                function_list=[get_search_results]
+                function_list=[get_search_results],
+                history=Global_History
             )
-            llm_response = dict(list(llm_response)[1])['content']
+            llm_response = dict(list(llm_response)[-1])['content']
 
             # Discord 메시지 전송: 텍스트(분석 결과)를 포함하여 한 번에 전송
             future_msg = executor.submit(lambda: asyncio.run_coroutine_threadsafe(
@@ -705,8 +771,9 @@ def receive_data():
                     new_message=transcribed_text,
                     image_path=resized_image_filename,
                     function_list=[get_search_results],
+                    history=Global_History
                 )
-                llm_response = dict(list(llm_response)[1])['content']
+                llm_response = dict(list(llm_response)[-1])['content']
             else:
                 llm_response = "음성 메시지를 처리할 수 없습니다. 텍스트로 변환 중 오류가 발생했습니다."
             
@@ -745,9 +812,10 @@ def receive_data():
                 system_prompt=system_prompt,
                 new_message=extra_message,
                 function_list=[get_search_results, maps_search_nearby],
-                image_path=None
+                image_path=None,
+                history=Global_History
             )
-            llm_response = dict(list(llm_response)[1])['content']
+            llm_response = dict(list(llm_response)[-1])['content']
 
             # Discord 메시지 전송: 텍스트(분석 결과)를 포함하여 한 번에 전송
             future_msg = executor.submit(lambda: asyncio.run_coroutine_threadsafe(
@@ -799,9 +867,10 @@ def receive_data():
                     system_prompt=system_prompt,
                     new_message=transcribed_text,
                     function_list=[get_search_results, maps_search_nearby],
-                    image_path=None
+                    image_path=None,
+                    history=Global_History
                 )
-                llm_response = dict(list(llm_response)[1])['content']
+                llm_response = dict(list(llm_response)[-1])['content']
 
             else:
                 llm_response = "음성 메시지를 처리할 수 없습니다. 텍스트로 변환 중 오류가 발생했습니다."
