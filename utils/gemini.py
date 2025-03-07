@@ -14,7 +14,7 @@ logging.basicConfig(level=logging.DEBUG,
 # 추가: 전역 변수 HISTORY 선언
 HISTORY = []
 
-def gemini_bot(system_prompt: Optional[str] = None, user_input: str = "", image_path: Optional[str] = None, history_turns: int = 7):
+def gemini_bot(system_prompt: Optional[str] = None, user_input: str = "", image_path: Optional[str] = None, history_turns: int = 7, function_call: Optional[list] = None, config_dict: Optional[dict] = None):
     # API 키 설정
     genai.configure(api_key=GEMINI_API_KEY)
     
@@ -60,8 +60,11 @@ def gemini_bot(system_prompt: Optional[str] = None, user_input: str = "", image_
             # 이미지 정보를 프롬프트에 추가 (이미지 객체 직접 전달)
             prompt_parts.insert(1, image)
         
-        # LLM 호출
-        response = model.generate_content(prompt_parts)
+        if function_call is not None:
+            response = model.generate_content(prompt_parts, config=config_dict)
+        else:
+            # LLM 호출
+            response = model.generate_content(prompt_parts)
 
         # LLM 응답 저장 및 출력
         llm_response = response.text

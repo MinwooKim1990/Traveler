@@ -7,7 +7,7 @@ from .bot import bot, get_channel
 from utils import search_nearby_places, compute_route_matrix
 from utils.gemini import gemini_bot
 
-async def send_location_to_discord(latitude, longitude, street, city, extra_message=None, image_path=None, audio_path=None, show_places=False):
+async def send_location_to_discord(latitude, longitude, street, city, extra_message=None, image_path=None, audio_path=None, show_places=False, message_include=True):
     """위치 정보와 추가 데이터를 디스코드로 전송합니다.
     
     Parameters:
@@ -32,50 +32,53 @@ async def send_location_to_discord(latitude, longitude, street, city, extra_mess
         logging.error("디스코드 채널을 찾을 수 없거나 TextChannel이 아님")
         return
 
-    # 메시지 구성
-    message_parts = []
-    
-    # 추가 메시지가 있다면 맨 위에 추가
-    if extra_message:
-        message_parts.append(f"💬 **메시지**:\n{extra_message}\n\n")
-    
-    # 기본 GPS 데이터 정보
-    message_parts.append(f"📍 **위치 정보**\n위도: {lat1}\n경도: {lng1}")
-    if street or city:
-        message_parts.append(f"주소: {street}, {city}")
-    
-    # show_places가 True인 경우에만 주변 장소 정보 추가
-    if show_places:
-        # 주변 장소 검색
-        filtered_places = search_nearby_places(lat1, lng1)
-        message_parts.append(f"\n**총 {len(filtered_places)}개의 장소 정보가 필터링되었습니다.**")
+    if message_include == True:
+        # 메시지 구성
+        message_parts = []
         
-        # 각 장소별 정보 추가
-        for i, ele in enumerate(filtered_places):
-            place_info = f"\n\n**장소 {i+1}: {ele['name']}**\n"
-            place_info += f"위치: {ele['location']}\n"
-            place_info += f"영업 여부: {ele['open_now']}\n"
-            place_info += f"평점: {ele['rating']}\n"
-            place_info += f"유형: {ele['types']}\n"
-            place_info += f"거리: {ele['distance']:.2f} km\n"
+        # 추가 메시지가 있다면 맨 위에 추가
+        if extra_message:
+            message_parts.append(f"💬 **메시지**:\n{extra_message}\n\n")
+        
+        # 기본 GPS 데이터 정보
+        message_parts.append(f"📍 **위치 정보**\n위도: {lat1}\n경도: {lng1}")
+        if street or city:
+            message_parts.append(f"주소: {street}, {city}")
+        
+        # show_places가 True인 경우에만 주변 장소 정보 추가
+        if show_places:
+            # 주변 장소 검색
+            filtered_places = search_nearby_places(lat1, lng1)
+            message_parts.append(f"\n**총 {len(filtered_places)}개의 장소 정보가 필터링되었습니다.**")
             
-            # 첫 두 장소에 대해 경로 정보 추가 (도보, 운전)
-            if i in [0, 1]:
-                lat2 = float(ele['location'][0])
-                lng2 = float(ele['location'][1])
-                try:
-                    walking_distance = compute_route_matrix((lat1, lng1), [(lat2, lng2)], travel_mode='WALK')
-                    driving_distance = compute_route_matrix((lat1, lng1), [(lat2, lng2)], travel_mode='DRIVE')
-                    place_info += f"Google Maps 도보 경로: {json.dumps(walking_distance, ensure_ascii=False)}\n"
-                    place_info += f"Google Maps 운전 경로: {json.dumps(driving_distance, ensure_ascii=False)}\n"
-                except Exception as route_error:
-                    logging.error(f"경로 정보 계산 오류: {route_error}")
-                    place_info += "경로 정보 없음\n"
-                    
-            place_info += f"{'-'*30}\n"
-            message_parts.append(place_info)
-    
-    message = "\n".join(message_parts)
+            # 각 장소별 정보 추가
+            for i, ele in enumerate(filtered_places):
+                place_info = f"\n\n**장소 {i+1}: {ele['name']}**\n"
+                place_info += f"위치: {ele['location']}\n"
+                place_info += f"영업 여부: {ele['open_now']}\n"
+                place_info += f"평점: {ele['rating']}\n"
+                place_info += f"유형: {ele['types']}\n"
+                place_info += f"거리: {ele['distance']:.2f} km\n"
+                
+                # 첫 두 장소에 대해 경로 정보 추가 (도보, 운전)
+                if i in [0, 1]:
+                    lat2 = float(ele['location'][0])
+                    lng2 = float(ele['location'][1])
+                    try:
+                        walking_distance = compute_route_matrix((lat1, lng1), [(lat2, lng2)], travel_mode='WALK')
+                        driving_distance = compute_route_matrix((lat1, lng1), [(lat2, lng2)], travel_mode='DRIVE')
+                        place_info += f"Google Maps 도보 경로: {json.dumps(walking_distance, ensure_ascii=False)}\n"
+                        place_info += f"Google Maps 운전 경로: {json.dumps(driving_distance, ensure_ascii=False)}\n"
+                    except Exception as route_error:
+                        logging.error(f"경로 정보 계산 오류: {route_error}")
+                        place_info += "경로 정보 없음\n"
+                        
+                place_info += f"{'-'*30}\n"
+                message_parts.append(place_info)
+        
+        message = "\n".join(message_parts)
+    else:
+        message = ""
     files = []
     
     # 이미지 파일이 있고 실제로 존재하는 경우에만 첨부

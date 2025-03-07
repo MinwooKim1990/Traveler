@@ -4,21 +4,23 @@ import logging
 import googlemaps
 from .distance import haversine_distance
 from config import GMAPS_API_KEY
+import numpy as np
 
-def search_nearby_places(latitude: float, longitude: float, radius: int = 500, k: int = 5, language: str = 'ko', keyword: str = 'restaurant'):
+def search_nearby_places(latitude: float, longitude: float, keyword: str) -> list:
     """
     주어진 위치 주변의 장소들을 검색합니다.
     
     Parameters:
         latitude, longitude: 중심 위치의 위도와 경도
-        radius: 검색 반경 (미터)
-        k: 반환할 장소의 최대 수
-        language: 결과의 언어 코드
         keyword: 검색 키워드
         
     Returns:
         가까운 순서대로 정렬된 장소 목록
     """
+    radius=1000
+    k=20
+    language='ko'
+
     try:
         gmaps = googlemaps.Client(key=GMAPS_API_KEY)
         location = (latitude, longitude)
