@@ -7,12 +7,6 @@ from timezonefinder import TimezoneFinder
 import pytz
 import os
 import time
-import logging
-import requests
-from urllib.parse import urlparse, urljoin
-from concurrent.futures import ThreadPoolExecutor
-import re
-from bs4 import BeautifulSoup
 
 def get_search_results(query: str):
     results = []
@@ -186,7 +180,7 @@ def generate_content_with_history(system_prompt: str, new_message: str, function
         history.append({"role": "assistant", "content": f"오류: {str(e)}"})
         return history
     
-def search_and_extract(query: str) -> list:
+def search_and_extract(query: str) -> str:
     max_results = 10
     max_workers = 10
     # 로깅 설정
@@ -207,13 +201,7 @@ def search_and_extract(query: str) -> list:
     RETRY_DELAY = 1   # 초
     
     def fetch_url(url: str, session: requests.Session, retry: int = 0) -> str:
-        # URL에 스킴이 없는 경우 https:를 추가
-        parsed = urlparse(url)
-        if not parsed.scheme:
-            url = "https:" + url
-        # googletagmanager 관련 URL은 처리하지 않도록 함
-        if "googletagmanager.com" in url:
-            return ""
+        """단일 URL에서 HTML 콘텐츠를 가져옴 (재시도 로직 포함)."""
         try:
             logger.debug(f"Fetching {url}")
             response = session.get(url, headers=HEADERS, timeout=TIMEOUT, verify=False)
@@ -240,6 +228,11 @@ def search_and_extract(query: str) -> list:
             return ""
     
     def extract_text_from_html_sync(html_content: str, session: requests.Session = None, visited: set = None, base_url: str = None) -> str:
+        """
+        HTML 콘텐츠에서 메인 텍스트를 추출합니다.
+        readability 라이브러리를 우선 사용하며 실패시 BeautifulSoup을 통해 재시도합니다.
+        그리고, 페이지 내 <iframe> 태그의 콘텐츠도 함께 추출합니다.
+        """
         if visited is None:
             visited = set()
         main_text = ""
@@ -294,6 +287,7 @@ def search_and_extract(query: str) -> list:
         return main_text
     
     def process_url(url: str, session: requests.Session) -> dict:
+        """URL에서 본문 텍스트를 추출하는 함수."""
         start_time = time.time()
         result = {"url": url, "text": "", "success": False, "time": 0}
         html_content = fetch_url(url, session)
@@ -344,6 +338,5 @@ def search_and_extract(query: str) -> list:
                     extracted[url] = ""
         for item in results:
             item["main"] = extracted.get(item["link"], "")
-    
-    # get_search_results와 동일한 딕셔너리 리스트 형식으로 반환
-    return results
+    result_str = json.dumps(results, ensure_ascii=False)
+    return result_str
