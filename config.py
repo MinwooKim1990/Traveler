@@ -7,6 +7,7 @@ load_dotenv()
 
 # 기본 설정
 API_KEY = os.getenv('API_KEY')
+GROQ_API_KEY = os.getenv('GROQ_API_KEY')
 GMAPS_API_KEY = os.getenv('GMAPS_API_KEY')
 DISCORD_TOKEN = os.getenv('DISCORD_TOKEN')
 SERVER_ID = int(os.getenv('SERVER_ID'))

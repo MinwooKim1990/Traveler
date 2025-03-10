@@ -14,11 +14,10 @@ from config import API_KEY, UPLOAD_FOLDER, RESPONSE_FOLDER, CHANNEL_ID, HISTORY_
 from discord_bot.bot import bot
 from discord_bot import send_location_to_discord  # 다시 직접 임포트
 
-from utils.audio_convert import convert_m4a_to_mp3_moviepy
-from utils.whisper_gen import transcribe_audio, synthesize_text, detect_language
+from utils.whisper_gen import groq_transcribe_audio, synthesize_text, detect_language
 from utils import search_nearby_places as maps_search_nearby
 from utils.image_resize import resize_image
-from utils.new_utils import get_local_time_by_gps, get_search_results, generate_content_with_history, generate_unique_filename
+from utils.new_utils import get_local_time_by_gps, get_search_results, generate_content_with_history, generate_unique_filename, search_and_extract
 
 Global_History = []
 
@@ -308,13 +307,13 @@ Use the user's current location and time from user prompt to make the conversati
 ## Using Internet Search Function
 ============================================================
 1. **Gather Data**: Determine when you need information you don't know or need to be updated.
-2. **Use get_search_results function**: Use function call to retrieve several search results by DuckDuckGo
+2. **Use search_and_extract function**: Use function call to retrieve several search results by DuckDuckGo
 
    Function parameters:
-   - query: YOUR QUERY
+   - query: YOUR REFINED SEARCH QUERY
    ```
 3. **Filter Results**: 
-   - Process search results by analyzing the returned titles and snippets
+   - Process search results by analyzing the returned titles, snippets and main text
    - Summarize the information in search results
    - Include relevant citations as references at the end of your response
    - Translate if needed - ensure all information is presented in the {locale_mapper[user_language]}
@@ -379,13 +378,13 @@ You are a specialized function call assistant based on user's current location a
 
 ## Using Internet Search Function
 1. **Gather Data**: Determine when you need information you don't know or need to be updated.
-2. **Use get_search_results function**: Use function call to retrieve several search results by DuckDuckGo
+2. **Use search_and_extract function**: Use function call to retrieve several search results by DuckDuckGo
 
    Function parameters:
-   - query: YOUR QUERY
+   - query: YOUR REFINED SEARCH QUERY
    ```
 3. **Filter Results**: 
-   - Process search results by analyzing the returned titles and snippets
+   - Process search results by analyzing the returned titles, snippets and main text
    - Summarize the information all the information in the search results
    - Include relevant citations as references at the end of your response
    - **IMPORTANT:Citations Must not follwing Markdown format ex) Using only URL(Whole URL without missing http:// or https://) in parenthesis from(https://www.xxx.com/) instead of markdown format [https://www.xxx.com/](https://www.xxx.com/)**
@@ -497,7 +496,7 @@ def receive_data():
             # 시스템 프롬프트 생성
             system_prompt = System_Prompt(latitude, longitude, city, street, extra_message, now_time, 4)
             
-            function_list = [maps_search_nearby, get_search_results]
+            function_list = [maps_search_nearby, search_and_extract]
             
             llm_response = generate_content_with_history(
                 system_prompt=system_prompt,
@@ -726,7 +725,7 @@ def receive_data():
                 system_prompt=system_prompt,
                 new_message=extra_message,
                 image_path=resized_image_filename or "",
-                function_list=[get_search_results],
+                function_list=[search_and_extract],
                 k=HISTORY_SIZE,
                 history=Global_History
             )
@@ -766,16 +765,9 @@ def receive_data():
         # =====================================================================================
         elif latitude and longitude and image_filename and audio_filename and not extra_message:
             logging.info("케이스 4: 이미지 + 오디오 + GPS - 오디오 변환 후 처리")
-            # 오디오 파일 확장자 확인 및 변환
-            audio_ext = os.path.splitext(audio_filename)[1].lower()
-            mp3_audio_path = audio_filename
-            
-            # m4a 파일이면 mp3로 변환
-            if audio_ext == '.m4a':
-                mp3_audio_path = convert_m4a_to_mp3_moviepy(audio_filename)
             
             # 음성을 텍스트로 변환 (medium 모델 사용)
-            transcribed_text = transcribe_audio(mp3_audio_path, "medium")
+            transcribed_text = groq_transcribe_audio(audio_filename)
             
             if transcribed_text and isinstance(transcribed_text, str):
                 logging.info(f"오디오 텍스트 변환 결과: {transcribed_text}")
@@ -815,7 +807,7 @@ def receive_data():
                     system_prompt=system_prompt,
                     new_message=transcribed_text,
                     image_path=resized_image_filename or "",
-                    function_list=[get_search_results],
+                    function_list=[search_and_extract],
                     k=HISTORY_SIZE,
                     history=Global_History
                 )
@@ -868,7 +860,7 @@ def receive_data():
             llm_response = generate_content_with_history(
                 system_prompt=system_prompt,
                 new_message=extra_message,
-                function_list=[get_search_results, maps_search_nearby],
+                function_list=[search_and_extract, maps_search_nearby],
                 image_path="",
                 k=HISTORY_SIZE,
                 history=Global_History
@@ -916,16 +908,8 @@ def receive_data():
             logging.info("케이스 5-2: 오디오 + GPS - 오디오 변환 후 처리")
             executor = concurrent.futures.ThreadPoolExecutor()
             
-            # 오디오 파일 확장자 확인 및 변환
-            audio_ext = os.path.splitext(audio_filename)[1].lower()
-            mp3_audio_path = audio_filename
-            
-            # m4a 파일이면 mp3로 변환
-            if audio_ext == '.m4a':
-                mp3_audio_path = convert_m4a_to_mp3_moviepy(audio_filename)
-            
             # 음성을 텍스트로 변환
-            transcribed_text = transcribe_audio(mp3_audio_path, "medium")
+            transcribed_text = groq_transcribe_audio(audio_filename)
             
             if transcribed_text and isinstance(transcribed_text, str):
                 logging.info(f"오디오 텍스트 변환 결과: {transcribed_text}")
@@ -938,7 +922,7 @@ def receive_data():
                 llm_response = generate_content_with_history(
                     system_prompt=system_prompt,
                     new_message=transcribed_text,
-                    function_list=[get_search_results, maps_search_nearby],
+                    function_list=[search_and_extract, maps_search_nearby],
                     image_path="",
                     k=HISTORY_SIZE,
                     history=Global_History
@@ -1093,7 +1077,7 @@ def process_discord_message(message_content, latitude=0, longitude=0, city="", s
             llm_response = generate_content_with_history(
                 system_prompt=system_prompt,
                 new_message=message_content,
-                function_list=[get_search_results],
+                function_list=[search_and_extract],
                 image_path=image_path,
                 k=HISTORY_SIZE,
                 history=Global_History
@@ -1106,7 +1090,7 @@ def process_discord_message(message_content, latitude=0, longitude=0, city="", s
             llm_response = generate_content_with_history(
                 system_prompt=system_prompt,
                 new_message=message_content,
-                function_list=[get_search_results, maps_search_nearby],
+                function_list=[search_and_extract, maps_search_nearby],
                 image_path="",
                 k=HISTORY_SIZE,
                 history=Global_History

@@ -7,6 +7,12 @@ from timezonefinder import TimezoneFinder
 import pytz
 import os
 import time
+import logging
+import requests
+from urllib.parse import urlparse, urljoin
+from concurrent.futures import ThreadPoolExecutor
+import re
+from bs4 import BeautifulSoup
 
 def get_search_results(query: str):
     results = []
@@ -179,3 +185,165 @@ def generate_content_with_history(system_prompt: str, new_message: str, function
         history.append({"role": "user", "content": new_message})
         history.append({"role": "assistant", "content": f"오류: {str(e)}"})
         return history
+    
+def search_and_extract(query: str) -> list:
+    max_results = 10
+    max_workers = 10
+    # 로깅 설정
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+    logger = logging.getLogger(__name__)
+    
+    # 상수 설정
+    HEADERS = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1',
+        'Cache-Control': 'max-age=0'
+    }
+    TIMEOUT = 30      # 초
+    MAX_RETRIES = 3
+    RETRY_DELAY = 1   # 초
+    
+    def fetch_url(url: str, session: requests.Session, retry: int = 0) -> str:
+        # URL에 스킴이 없는 경우 https:를 추가
+        parsed = urlparse(url)
+        if not parsed.scheme:
+            url = "https:" + url
+        # googletagmanager 관련 URL은 처리하지 않도록 함
+        if "googletagmanager.com" in url:
+            return ""
+        try:
+            logger.debug(f"Fetching {url}")
+            response = session.get(url, headers=HEADERS, timeout=TIMEOUT, verify=False)
+            if response.status_code == 200:
+                return response.text
+            elif response.status_code in (429, 503) and retry < MAX_RETRIES:
+                wait_time = RETRY_DELAY * (2 ** retry)
+                logger.warning(f"Rate limited on {url}. Retrying in {wait_time}s...")
+                time.sleep(wait_time)
+                return fetch_url(url, session, retry + 1)
+            else:
+                logger.error(f"Error fetching {url}: Status code {response.status_code}")
+                return ""
+        except requests.Timeout:
+            if retry < MAX_RETRIES:
+                wait_time = RETRY_DELAY * (2 ** retry)
+                logger.warning(f"Timeout on {url}. Retrying in {wait_time}s...")
+                time.sleep(wait_time)
+                return fetch_url(url, session, retry + 1)
+            logger.error(f"Timeout fetching {url} after {MAX_RETRIES} retries")
+            return ""
+        except Exception as e:
+            logger.error(f"Error fetching {url}: {e}")
+            return ""
+    
+    def extract_text_from_html_sync(html_content: str, session: requests.Session = None, visited: set = None, base_url: str = None) -> str:
+        if visited is None:
+            visited = set()
+        main_text = ""
+        try:
+            from readability import Document
+            doc = Document(html_content)
+            main_html = doc.summary()
+            soup = BeautifulSoup(main_html, "lxml")
+            main_text = soup.get_text(separator=" ", strip=True)
+            main_text = re.sub(r'\s+', ' ', main_text).strip()
+        except Exception as e:
+            logger.error(f"Readability 추출 실패: {e}. 기존 방식으로 재시도합니다.")
+            if not html_content:
+                return ""
+            soup = BeautifulSoup(html_content, "lxml")
+            for element in soup(['script', 'style', 'meta', 'noscript', 'head', 'footer', 'nav']):
+                element.decompose()
+            paragraphs = []
+            for tag in soup.find_all(['p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'div', 'span', 'article', 'section', 'li', 'td', 'th']):
+                curr_text = tag.get_text(strip=True)
+                if curr_text and len(curr_text) > 1:
+                    paragraphs.append(curr_text)
+            remaining_text = soup.get_text(separator=' ', strip=True)
+            if remaining_text:
+                for p in paragraphs:
+                    remaining_text = remaining_text.replace(p, '')
+                remaining_parts = [part for part in remaining_text.split() if len(part) > 1]
+                if remaining_parts:
+                    paragraphs.append(' '.join(remaining_parts))
+            main_text = ' '.join(paragraphs)
+            main_text = re.sub(r'\s+', ' ', main_text).strip()
+    
+        if session is not None:
+            original_soup = BeautifulSoup(html_content, "lxml")
+            iframe_texts = []
+            for iframe in original_soup.find_all("iframe"):
+                src = iframe.get("src", "")
+                if src:
+                    if not bool(urlparse(src).netloc) and base_url:
+                        src = urljoin(base_url, src)
+                    if src not in visited:
+                        visited.add(src)
+                        iframe_html = fetch_url(src, session)
+                        if iframe_html:
+                            iframe_content = extract_text_from_html_sync(iframe_html, session, visited, base_url=src)
+                            if iframe_content:
+                                iframe_texts.append(iframe_content)
+            if iframe_texts:
+                main_text += " " + " ".join(iframe_texts)
+                main_text = re.sub(r'\s+', ' ', main_text).strip()
+    
+        return main_text
+    
+    def process_url(url: str, session: requests.Session) -> dict:
+        start_time = time.time()
+        result = {"url": url, "text": "", "success": False, "time": 0}
+        html_content = fetch_url(url, session)
+        if not html_content:
+            result["time"] = time.time() - start_time
+            return result
+        text = extract_text_from_html_sync(html_content, session, base_url=url)
+        result["text"] = text
+        result["success"] = True
+        result["time"] = time.time() - start_time
+        result["length"] = len(text)
+        return result
+    
+    # DuckDuckGo 검색 수행
+    results = []
+    try:
+        ddg = DDGS()
+        ddg_results = ddg.text(query, max_results=max_results)
+        for item in ddg_results:
+            href = item.get("href", "").strip()
+            if not href:
+                continue
+            result_item = {
+                "title": item.get("title", "").strip(),
+                "link": href,
+                "snippet": item.get("body", "").strip(),
+                "main": ""
+            }
+            if all(r.get('link') != href for r in results):
+                results.append(result_item)
+    except Exception as e:
+        logger.error(f"DuckDuckGo 검색 오류: {e}")
+    
+    # 검색 결과의 각 링크에 대해 본문 텍스트 추출 (병렬 처리)
+    if results:
+        links = [item["link"] for item in results]
+        session = requests.Session()
+        extracted = {}
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_url = {executor.submit(process_url, url, session): url for url in links}
+            for future in future_to_url:
+                url = future_to_url[future]
+                try:
+                    resp = future.result()
+                    extracted[url] = resp["text"] if resp["success"] else ""
+                except Exception as exc:
+                    logger.error(f"Error processing {url}: {exc}")
+                    extracted[url] = ""
+        for item in results:
+            item["main"] = extracted.get(item["link"], "")
+    
+    # get_search_results와 동일한 딕셔너리 리스트 형식으로 반환
+    return results

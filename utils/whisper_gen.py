@@ -2,10 +2,11 @@
 import sys
 import os
 from google.cloud import texttospeech
-import os
 import re
 from collections import Counter
 import langid
+from groq import Groq
+from config import GROQ_API_KEY
 
 def transcribe_audio(audio_file, model_name: str = "base"):
     """
@@ -213,4 +214,20 @@ def synthesize_text(text: str, output_audio: str = "output.mp3", gender: str = "
     except Exception as e:
         print(f"음성 합성 중 예상치 못한 오류 발생: {e}")
         return False
+    
+def groq_transcribe_audio(file_path: str) -> str:
+    # 환경 변수 설정
+    os.environ["GROQ_API_KEY"] = GROQ_API_KEY
+    # Groq 클라이언트 초기화
+    client = Groq()
+    
+    # 오디오 파일 열기 및 트랜스크립션 생성
+    with open(file_path, "rb") as audio_file:
+        transcription = client.audio.transcriptions.create(
+            file=(file_path, audio_file.read()),  # 필수: 오디오 파일
+            model="whisper-large-v3-turbo",         # 필수: 사용할 트랜스크립션 모델
+            temperature=0.0                         # Optional: 온도 설정
+        )
+    # 트랜스크립션 텍스트 반환
+    return transcription.text
 # %%
